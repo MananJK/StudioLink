@@ -70,7 +70,7 @@ class OllamaAdapter:
             else:
                 blob_path = self.config.ollama_blobs_dir / model_digest.replace(":", "-")
                 if not blob_path.exists():
-                    issues.append("resolved blob path does not exist")
+                    issues.append("model blob is missing from the Ollama blob store")
                 else:
                     blob_size = blob_path.stat().st_size
                     if self._has_gguf_header(blob_path):

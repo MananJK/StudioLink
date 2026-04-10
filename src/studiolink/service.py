@@ -7,7 +7,7 @@ from pathlib import Path
 
 from studiolink.config import StudioLinkConfig
 from studiolink.lmstudio_adapter import LMStudioAdapter
-from studiolink.models import DoctorCheck, LinkMode, OllamaModel, SyncRecord, SyncResult
+from studiolink.models import DoctorCheck, LinkMode, ModelReadiness, OllamaModel, SyncRecord, SyncResult
 from studiolink.ollama_adapter import OllamaAdapter
 from studiolink.state import StateStore
 
@@ -17,6 +17,16 @@ class StatusEntry:
     model: OllamaModel
     synced: bool
     sync_record: SyncRecord | None
+
+    @property
+    def display_status(self) -> str:
+        if self.synced:
+            return "synced"
+        if self.model.readiness is ModelReadiness.STALE:
+            return "stale"
+        if self.model.readiness is ModelReadiness.INVALID:
+            return "invalid"
+        return "pending"
 
 
 class StudioLinkService:
@@ -72,7 +82,20 @@ class StudioLinkService:
                 )
                 continue
 
-            if not model.gguf_valid or model.blob_path is None or model.model_digest is None:
+            if model.readiness is ModelReadiness.STALE:
+                results.append(
+                    SyncResult(
+                        model=model,
+                        status="error",
+                        message=(
+                            "model blob is missing from the Ollama blob store; "
+                            f"run `ollama pull {model.canonical_name}` to restore it"
+                        ),
+                    )
+                )
+                continue
+
+            if model.readiness is ModelReadiness.INVALID or model.blob_path is None or model.model_digest is None:
                 results.append(
                     SyncResult(
                         model=model,
@@ -154,12 +177,21 @@ class StudioLinkService:
 
         discovered = self.scan()
         checks.append(DoctorCheck("discovered ollama models", bool(discovered), f"{len(discovered)} model(s)"))
-        invalid = [model.canonical_name for model in discovered if not model.gguf_valid]
+        stale = [model.canonical_name for model in discovered if model.readiness is ModelReadiness.STALE]
         checks.append(
             DoctorCheck(
-                "gguf validation",
+                "ollama blob presence",
+                not stale,
+                "all discovered models have local blobs" if not stale else ", ".join(stale),
+            )
+        )
+
+        invalid = [model.canonical_name for model in discovered if model.readiness is ModelReadiness.INVALID]
+        checks.append(
+            DoctorCheck(
+                "gguf header validation",
                 not invalid,
-                "all discovered models passed GGUF validation" if not invalid else ", ".join(invalid),
+                "all discovered model blobs passed GGUF validation" if not invalid else ", ".join(invalid),
             )
         )
 
@@ -202,6 +234,8 @@ class StudioLinkService:
 
     @staticmethod
     def _is_currently_synced(model: OllamaModel, record: SyncRecord | None) -> bool:
+        if model.readiness is not ModelReadiness.READY:
+            return False
         if record is None:
             return False
         if record.digest != model.model_digest:

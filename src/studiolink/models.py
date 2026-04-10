@@ -20,6 +20,12 @@ class LinkMode(StrEnum):
         }[self]
 
 
+class ModelReadiness(StrEnum):
+    READY = "ready"
+    STALE = "stale"
+    INVALID = "invalid"
+
+
 @dataclass(slots=True, frozen=True)
 class OllamaModel:
     canonical_name: str
@@ -35,6 +41,18 @@ class OllamaModel:
     blob_size: int | None
     gguf_valid: bool
     issues: tuple[str, ...] = ()
+
+    @property
+    def readiness(self) -> ModelReadiness:
+        if self.gguf_valid:
+            return ModelReadiness.READY
+        if any("blob is missing from the Ollama blob store" in issue for issue in self.issues):
+            return ModelReadiness.STALE
+        return ModelReadiness.INVALID
+
+    @property
+    def blob_present(self) -> bool:
+        return self.blob_path is not None and self.blob_path.exists()
 
     @property
     def short_name(self) -> str:

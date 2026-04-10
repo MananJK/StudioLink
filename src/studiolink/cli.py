@@ -64,8 +64,7 @@ def run_scan(args: argparse.Namespace, service: StudioLinkService) -> int:
 
     print(f"Discovered {len(models)} model(s):")
     for model in models:
-        state = "ready" if model.gguf_valid else "invalid"
-        print(f"- {model.canonical_name} [{state}]")
+        print(f"- {model.canonical_name} [{model.readiness.value}]")
         print(f"  blob: {model.blob_path or 'missing'}")
         if model.issues:
             print(f"  issues: {'; '.join(model.issues)}")
@@ -103,8 +102,7 @@ def run_status(args: argparse.Namespace, service: StudioLinkService) -> int:
     synced = sum(1 for entry in entries if entry.synced)
     print(f"Discovered {len(entries)} model(s); {synced} tracked as synced.")
     for entry in entries:
-        status = "synced" if entry.synced else "pending"
-        print(f"- {entry.model.canonical_name}: {status}")
+        print(f"- {entry.model.canonical_name}: {entry.display_status}")
         if entry.sync_record is not None:
             imported_at = entry.sync_record.imported_at.astimezone(timezone.utc).isoformat()
             print(f"  imported: {imported_at}")
@@ -145,6 +143,7 @@ def _model_to_json(model: object) -> dict[str, object]:
         "canonical_name": getattr(model, "canonical_name"),
         "fully_qualified_name": getattr(model, "fully_qualified_name"),
         "blob_path": str(getattr(model, "blob_path")) if getattr(model, "blob_path") else None,
+        "readiness": getattr(model, "readiness").value,
         "gguf_valid": getattr(model, "gguf_valid"),
         "issues": list(getattr(model, "issues")),
         "user_repo": getattr(model, "user_repo"),
@@ -164,6 +163,7 @@ def _status_entry_to_json(entry: StatusEntry) -> dict[str, object]:
     return {
         "model": _model_to_json(entry.model),
         "synced": entry.synced,
+        "status": entry.display_status,
         "sync_record": None if entry.sync_record is None else entry.sync_record.to_json(),
     }
 
