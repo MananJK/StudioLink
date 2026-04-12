@@ -6,6 +6,7 @@ import logging
 from datetime import timezone
 
 from studiolink import __version__
+from studiolink.lmstudio_adapter import LMStudioError
 from studiolink.models import DoctorCheck, LinkMode, SyncResult
 from studiolink.service import StatusEntry, StudioLinkService
 
@@ -92,6 +93,12 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
         return 2
+    except LMStudioError as exc:
+        parser.error(str(exc))
+        return 1
+    except Exception as exc:
+        parser.error(f"Unexpected error: {exc}")
+        return 1
 
 
 def run_scan(args: argparse.Namespace, service: StudioLinkService) -> int:
@@ -197,7 +204,7 @@ Examples:
 
   studiolink scan                       # List all available models
   studiolink -v scan                    # Scan with debug output
-  studiolink sync deepseek-r1:8b        # Import a specific model
+  studiolink sync <modelname>            # Import a specific model
   studiolink sync --all                 # Import all discovered models
   studiolink status                     # Check sync status
   studiolink doctor                     # Verify prerequisites
