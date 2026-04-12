@@ -39,7 +39,7 @@ pip install -e .
 studiolink scan
 
 # Import a specific model
-studiolink sync deepseek-r1:8b
+studiolink sync <modelname>
 
 # Import all discovered models
 studiolink sync --all
@@ -70,9 +70,9 @@ studiolink -v scan
 **Output:**
 ```
 Discovered 3 model(s):
-- deepseek-r1:8b [ready]
+- <modelname> [ready]
   blob: C:\Users\...\ollama\models\blobs\sha256-...
-- embeddinggemma:300m [stale]
+- <modelname2> [stale]
   blob: C:\Users\...\ollama\models\blobs\sha256-...
   issues: model blob is missing from the Ollama blob store
 ```
@@ -82,19 +82,19 @@ Import one or more models into LM Studio.
 
 ```powershell
 # Import specific model(s)
-studiolink sync deepseek-r1:8b
-studiolink sync model1 model2 model3
+studiolink sync <modelname>
+studiolink sync <model1> <model2> <model3>
 
 # Import all discovered models
 studiolink sync --all
 
 # Preview without making changes (dry run)
-studiolink sync deepseek-r1:8b --dry-run
+studiolink sync <modelname> --dry-run
 
 # Use a specific link mode
-studiolink sync deepseek-r1:8b --hard-link
-studiolink sync deepseek-r1:8b --copy
-studiolink sync deepseek-r1:8b --symbolic-link
+studiolink sync <modelname> --hard-link
+studiolink sync <modelname> --copy
+studiolink sync <modelname> --symbolic-link
 
 # Verbose output
 studiolink -v sync --all
@@ -119,11 +119,11 @@ studiolink -v status
 **Output:**
 ```
 Discovered 3 model(s); 1 tracked as synced.
-- deepseek-r1:8b: synced
+- <modelname>: synced
   imported: 2026-04-12T10:30:00+00:00
-- embeddinggemma:300m: stale
+- <modelname2>: stale
   issues: model blob is missing from the Ollama blob store
-- granite4:350m: pending
+- <modelname3>: pending
 ```
 
 ### `studiolink doctor`
