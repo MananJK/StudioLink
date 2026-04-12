@@ -77,6 +77,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
     service = StudioLinkService()
+    logging.debug("Configuration loaded:")
+    logging.debug("  Ollama manifests: %s", service.config.ollama_manifests_dir)
+    logging.debug("  Ollama blobs: %s", service.config.ollama_blobs_dir)
+    logging.debug("  LM Studio models: %s", service.config.lmstudio_models_dir)
+    logging.debug("  State file: %s", service.config.state_file)
     try:
         return int(args.func(args, service))
     except ValueError as exc:

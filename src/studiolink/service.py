@@ -20,6 +20,8 @@ from studiolink.models import (
 from studiolink.ollama_adapter import OllamaAdapter
 from studiolink.state import StateStore
 
+logger = logging.getLogger("studiolink")
+
 
 @dataclass(slots=True, frozen=True)
 class StatusEntry:
@@ -46,7 +48,12 @@ class StudioLinkService:
         self.state = StateStore(self.config.state_file)
 
     def scan(self) -> list[OllamaModel]:
-        return self.ollama.scan_models()
+        logger.debug(
+            "Scanning Ollama manifests at %s", self.config.ollama_manifests_dir
+        )
+        models = self.ollama.scan_models()
+        logger.debug("Discovered %d model(s)", len(models))
+        return models
 
     def status(self) -> list[StatusEntry]:
         models = self.scan()
@@ -70,19 +77,38 @@ class StudioLinkService:
         link_mode: LinkMode | None = None,
         dry_run: bool = False,
     ) -> list[SyncResult]:
+        logger.debug(
+            "Starting sync: sync_all=%s, dry_run=%s, link_mode=%s",
+            sync_all,
+            dry_run,
+            link_mode,
+        )
         discovered = self.scan()
         if sync_all:
             selected = discovered
+            logger.debug("Syncing all %d discovered model(s)", len(selected))
         else:
             selected = self._select_models(discovered, model_names or [])
+            logger.debug(
+                "Syncing selected model(s): %s", [m.canonical_name for m in selected]
+            )
 
         records = self.state.load()
+        logger.debug("Loaded %d existing sync record(s)", len(records))
         mode = link_mode or self.config.default_link_mode
         results: list[SyncResult] = []
 
         for model in selected:
+            logger.debug(
+                "Processing model: %s (readiness=%s)",
+                model.canonical_name,
+                model.readiness,
+            )
             existing = records.get(model.canonical_name)
             if self._is_currently_synced(model, existing):
+                logger.debug(
+                    "Model %s is already synced, skipping", model.canonical_name
+                )
                 results.append(
                     SyncResult(
                         model=model,
@@ -94,6 +120,7 @@ class StudioLinkService:
                 continue
 
             if model.readiness is ModelReadiness.STALE:
+                logger.debug("Model %s is stale (blob missing)", model.canonical_name)
                 results.append(
                     SyncResult(
                         model=model,
@@ -111,6 +138,9 @@ class StudioLinkService:
                 or model.blob_path is None
                 or model.model_digest is None
             ):
+                logger.debug(
+                    "Model %s is invalid: %s", model.canonical_name, model.issues
+                )
                 results.append(
                     SyncResult(
                         model=model,
@@ -122,6 +152,12 @@ class StudioLinkService:
                 continue
 
             alias_path, alias_created = self._ensure_import_alias(model)
+            logger.debug(
+                "Importing model via LM Studio: %s (mode=%s, dry_run=%s)",
+                alias_path,
+                mode,
+                dry_run,
+            )
             try:
                 import_result = self.lmstudio.import_model(
                     str(alias_path),
@@ -129,8 +165,12 @@ class StudioLinkService:
                     link_mode=mode,
                     dry_run=dry_run,
                 )
+                logger.debug(
+                    "LM Studio import completed: %s", import_result.return_code
+                )
             finally:
                 if dry_run and alias_created and alias_path.exists():
+                    logger.debug("Cleaning up dry-run alias: %s", alias_path)
                     alias_path.unlink()
 
             record = SyncRecord(
@@ -147,6 +187,7 @@ class StudioLinkService:
             if not dry_run:
                 records[record.canonical_name] = record
                 self.state.save(records)
+                logger.debug("Saved sync record for %s", model.canonical_name)
 
             results.append(
                 SyncResult(
@@ -155,6 +196,11 @@ class StudioLinkService:
                     message=self._format_import_message(import_result),
                     record=record,
                 )
+            )
+            logger.debug(
+                "Model %s sync completed with status: %s",
+                model.canonical_name,
+                results[-1].status,
             )
 
         return results
@@ -196,6 +242,7 @@ class StudioLinkService:
 
         try:
             version = self.lmstudio.get_version()
+            logger.debug("Doctor: LM Studio version = %s", version)
             checks.append(
                 DoctorCheck(
                     "lm studio cli version",
@@ -204,10 +251,12 @@ class StudioLinkService:
                 )
             )
         except Exception as exc:
+            logger.debug("Doctor: LM Studio version check failed: %s", exc)
             checks.append(DoctorCheck("lm studio cli version", False, str(exc)))
 
         try:
             capabilities = self.lmstudio.get_import_capabilities()
+            logger.debug("Doctor: LM Studio import capabilities = %s", capabilities)
             checks.append(
                 DoctorCheck(
                     "lm studio import capabilities",
@@ -218,9 +267,11 @@ class StudioLinkService:
                 )
             )
         except Exception as exc:
+            logger.debug("Doctor: LM Studio capabilities check failed: %s", exc)
             checks.append(DoctorCheck("lm studio import capabilities", False, str(exc)))
 
         discovered = self.scan()
+        logger.debug("Doctor: discovered %d model(s)", len(discovered))
         checks.append(
             DoctorCheck(
                 "discovered ollama models",
@@ -233,6 +284,7 @@ class StudioLinkService:
             for model in discovered
             if model.readiness is ModelReadiness.STALE
         ]
+        logger.debug("Doctor: found %d stale model(s)", len(stale))
         checks.append(
             DoctorCheck(
                 "ollama blob presence",
@@ -248,6 +300,7 @@ class StudioLinkService:
             for model in discovered
             if model.readiness is ModelReadiness.INVALID
         ]
+        logger.debug("Doctor: found %d invalid model(s)", len(invalid))
         checks.append(
             DoctorCheck(
                 "gguf header validation",
@@ -296,13 +349,17 @@ class StudioLinkService:
         assert model.blob_path is not None
         self.config.import_staging_dir.mkdir(parents=True, exist_ok=True)
         alias_path = self.config.import_staging_dir / model.import_filename
+        logger.debug("Creating import alias: %s -> %s", model.blob_path, alias_path)
         if alias_path.exists():
+            logger.debug("Import alias already exists: %s", alias_path)
             return alias_path, False
         try:
             os.link(model.blob_path, alias_path)
+            logger.debug("Created hard link for import alias")
         except OSError as exc:
-            logging.warning("Hard link failed (%s), falling back to copy mode", exc)
+            logger.warning("Hard link failed (%s), falling back to copy mode", exc)
             shutil.copy2(model.blob_path, alias_path)
+            logger.debug("Copied blob to import alias")
         return alias_path, True
 
     @staticmethod
@@ -327,8 +384,13 @@ class StudioLinkService:
         return text or "LM Studio import completed"
 
     def _check_alias_creation(self) -> tuple[bool, str]:
+        logger.debug(
+            "Checking import staging directory: %s", self.config.import_staging_dir
+        )
         try:
             self.config.import_staging_dir.mkdir(parents=True, exist_ok=True)
+            logger.debug("Import staging directory ready")
         except OSError as exc:
+            logger.error("Failed to create import staging directory: %s", exc)
             return False, str(exc)
         return True, str(self.config.import_staging_dir)
