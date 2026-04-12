@@ -66,6 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     doctor_parser.set_defaults(func=run_doctor)
+
+    help_parser = subparsers.add_parser(
+        "help", help="Show all available commands and their descriptions."
+    )
+    help_parser.set_defaults(func=run_help)
     return parser
 
 
@@ -160,6 +165,48 @@ def run_doctor(args: argparse.Namespace, service: StudioLinkService) -> int:
         prefix = "OK" if check.ok else "FAIL"
         print(f"- {prefix}: {check.name} -> {check.details}")
     return 0 if all(check.ok for check in checks) else 1
+
+
+def run_help(args: argparse.Namespace, service: StudioLinkService) -> int:
+    help_text = """StudioLink - Sync Ollama-downloaded GGUF models into LM Studio.
+
+Available Commands:
+
+  scan              Discover GGUF-backed Ollama models.
+                    Usage: studiolink scan [--json] [-v]
+
+  sync              Import one or more models into LM Studio.
+                    Usage: studiolink sync <model> [<model>...] [--copy|--hard-link|--symbolic-link] [--dry-run] [-v]
+                           studiolink sync --all [--copy|--hard-link|--symbolic-link] [--dry-run] [-v]
+
+  status            Show discovered models and sync state.
+                    Usage: studiolink status [--json] [-v]
+
+  doctor            Check local StudioLink prerequisites.
+                    Usage: studiolink doctor [--json] [-v]
+
+  help              Show this help message.
+
+Global Options:
+
+  -v, --verbose     Enable verbose output (debug logging).
+  --version         Show version information.
+  --help            Show help for a specific command.
+
+Examples:
+
+  studiolink scan                       # List all available models
+  studiolink -v scan                    # Scan with debug output
+  studiolink sync deepseek-r1:8b        # Import a specific model
+  studiolink sync --all                 # Import all discovered models
+  studiolink status                     # Check sync status
+  studiolink doctor                     # Verify prerequisites
+
+For more help on a specific command:
+  studiolink <command> --help
+"""
+    print(help_text)
+    return 0
 
 
 def _resolve_link_mode(args: argparse.Namespace) -> LinkMode | None:
