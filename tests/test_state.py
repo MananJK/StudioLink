@@ -33,6 +33,18 @@ class StateStoreTests(unittest.TestCase):
         records = store.load()
         self.assertEqual(records["deepseek-r1:8b"], record)
 
+    def test_load_corrupted_state_file_returns_empty_dict(self) -> None:
+        root = Path.cwd() / ".test-tmp" / f"state-store-corrupt-{uuid.uuid4().hex}"
+        root.mkdir(parents=True)
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+
+        path = root / "state.json"
+        path.write_text("not valid json {", encoding="utf-8")
+        store = StateStore(path)
+
+        records = store.load()
+        self.assertEqual(records, {})
+
 
 if __name__ == "__main__":
     unittest.main()

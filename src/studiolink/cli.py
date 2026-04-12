@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from datetime import timezone
 
 from studiolink import __version__
@@ -14,28 +15,55 @@ def build_parser() -> argparse.ArgumentParser:
         prog="studiolink",
         description="Sync Ollama-downloaded GGUF models into LM Studio.",
     )
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose output."
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    scan_parser = subparsers.add_parser("scan", help="Discover GGUF-backed Ollama models.")
+    scan_parser = subparsers.add_parser(
+        "scan", help="Discover GGUF-backed Ollama models."
+    )
     scan_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     scan_parser.set_defaults(func=run_scan)
 
-    sync_parser = subparsers.add_parser("sync", help="Import one or more models into LM Studio.")
-    sync_parser.add_argument("models", nargs="*", help="Model names from `studiolink scan`.")
-    sync_parser.add_argument("--all", action="store_true", help="Sync every discovered model.")
-    sync_parser.add_argument("--dry-run", action="store_true", help="Preview the import command without changing state.")
-    sync_parser.add_argument("--copy", action="store_true", help="Use LM Studio copy mode.")
-    sync_parser.add_argument("--hard-link", action="store_true", help="Use LM Studio hard-link mode.")
-    sync_parser.add_argument("--symbolic-link", action="store_true", help="Use LM Studio symbolic-link mode.")
+    sync_parser = subparsers.add_parser(
+        "sync", help="Import one or more models into LM Studio."
+    )
+    sync_parser.add_argument(
+        "models", nargs="*", help="Model names from `studiolink scan`."
+    )
+    sync_parser.add_argument(
+        "--all", action="store_true", help="Sync every discovered model."
+    )
+    sync_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview the import command without changing state.",
+    )
+    sync_parser.add_argument(
+        "--copy", action="store_true", help="Use LM Studio copy mode."
+    )
+    sync_parser.add_argument(
+        "--hard-link", action="store_true", help="Use LM Studio hard-link mode."
+    )
+    sync_parser.add_argument(
+        "--symbolic-link", action="store_true", help="Use LM Studio symbolic-link mode."
+    )
     sync_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     sync_parser.set_defaults(func=run_sync)
 
-    status_parser = subparsers.add_parser("status", help="Show discovered models and sync state.")
+    status_parser = subparsers.add_parser(
+        "status", help="Show discovered models and sync state."
+    )
     status_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     status_parser.set_defaults(func=run_status)
 
-    doctor_parser = subparsers.add_parser("doctor", help="Check local StudioLink prerequisites.")
+    doctor_parser = subparsers.add_parser(
+        "doctor", help="Check local StudioLink prerequisites."
+    )
     doctor_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     doctor_parser.set_defaults(func=run_doctor)
     return parser
@@ -44,6 +72,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
+    else:
+        logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
     service = StudioLinkService()
     try:
         return int(args.func(args, service))
@@ -104,7 +136,9 @@ def run_status(args: argparse.Namespace, service: StudioLinkService) -> int:
     for entry in entries:
         print(f"- {entry.model.canonical_name}: {entry.display_status}")
         if entry.sync_record is not None:
-            imported_at = entry.sync_record.imported_at.astimezone(timezone.utc).isoformat()
+            imported_at = entry.sync_record.imported_at.astimezone(
+                timezone.utc
+            ).isoformat()
             print(f"  imported: {imported_at}")
         if entry.model.issues:
             print(f"  issues: {'; '.join(entry.model.issues)}")
@@ -142,7 +176,9 @@ def _model_to_json(model: object) -> dict[str, object]:
     return {
         "canonical_name": getattr(model, "canonical_name"),
         "fully_qualified_name": getattr(model, "fully_qualified_name"),
-        "blob_path": str(getattr(model, "blob_path")) if getattr(model, "blob_path") else None,
+        "blob_path": str(getattr(model, "blob_path"))
+        if getattr(model, "blob_path")
+        else None,
         "readiness": getattr(model, "readiness").value,
         "gguf_valid": getattr(model, "gguf_valid"),
         "issues": list(getattr(model, "issues")),
@@ -164,7 +200,9 @@ def _status_entry_to_json(entry: StatusEntry) -> dict[str, object]:
         "model": _model_to_json(entry.model),
         "synced": entry.synced,
         "status": entry.display_status,
-        "sync_record": None if entry.sync_record is None else entry.sync_record.to_json(),
+        "sync_record": None
+        if entry.sync_record is None
+        else entry.sync_record.to_json(),
     }
 
 

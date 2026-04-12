@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 from studiolink.config import StudioLinkConfig
 from studiolink.models import ImportResult, LinkMode
@@ -111,8 +113,31 @@ class StudioLinkServiceTests(unittest.TestCase):
         self.assertEqual(statuses["embeddinggemma:300m"], "error")
         self.assertEqual(len(self.service.lmstudio.import_calls), 1)
 
+    @patch("studiolink.service.os.link")
+    @patch("studiolink.service.shutil.copy2")
+    def test_sync_falls_back_to_copy_when_hard_link_fails(
+        self, mock_copy2: object, mock_link: object
+    ) -> None:
+        """Test that sync falls back to copy mode when hard link fails (e.g., cross-volume)."""
+        mock_link.side_effect = OSError("Invalid cross-device link")
+
+        ready_blob = self.blobs_dir / "sha256-readyblob"
+        ready_blob.write_bytes(b"GGUF" + b"\x00" * 8)
+        self._write_manifest("deepseek-r1", "8b", "sha256:readyblob")
+
+        results = self.service.sync(model_names=["deepseek-r1:8b"], dry_run=True)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].status, "dry-run")
+        # Verify os.link was attempted
+        mock_link.assert_called_once()
+        # Verify shutil.copy2 was used as fallback
+        mock_copy2.assert_called_once()
+
     def _write_manifest(self, repository: str, tag: str, digest: str) -> None:
-        manifest_path = self.manifests_dir / "registry.ollama.ai" / "library" / repository / tag
+        manifest_path = (
+            self.manifests_dir / "registry.ollama.ai" / "library" / repository / tag
+        )
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         manifest_path.write_text(
             json.dumps(

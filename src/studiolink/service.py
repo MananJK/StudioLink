@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import logging
 import os
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from studiolink.config import StudioLinkConfig
 from studiolink.lmstudio_adapter import LMStudioAdapter
-from studiolink.models import DoctorCheck, LinkMode, ModelReadiness, OllamaModel, SyncRecord, SyncResult
+from studiolink.models import (
+    DoctorCheck,
+    LinkMode,
+    ModelReadiness,
+    OllamaModel,
+    SyncRecord,
+    SyncResult,
+)
 from studiolink.ollama_adapter import OllamaAdapter
 from studiolink.state import StateStore
 
@@ -45,7 +54,9 @@ class StudioLinkService:
         return [
             StatusEntry(
                 model=model,
-                synced=self._is_currently_synced(model, records.get(model.canonical_name)),
+                synced=self._is_currently_synced(
+                    model, records.get(model.canonical_name)
+                ),
                 sync_record=records.get(model.canonical_name),
             )
             for model in models
@@ -95,12 +106,17 @@ class StudioLinkService:
                 )
                 continue
 
-            if model.readiness is ModelReadiness.INVALID or model.blob_path is None or model.model_digest is None:
+            if (
+                model.readiness is ModelReadiness.INVALID
+                or model.blob_path is None
+                or model.model_digest is None
+            ):
                 results.append(
                     SyncResult(
                         model=model,
                         status="error",
-                        message="model is not ready for import: " + "; ".join(model.issues or ("unknown error",)),
+                        message="model is not ready for import: "
+                        + "; ".join(model.issues or ("unknown error",)),
                     )
                 )
                 continue
@@ -145,21 +161,48 @@ class StudioLinkService:
 
     def doctor(self) -> list[DoctorCheck]:
         checks = [
-            DoctorCheck("ollama executable", self.config.ollama_exe.exists(), str(self.config.ollama_exe)),
-            DoctorCheck("lm studio executable", self.config.lms_exe.exists(), str(self.config.lms_exe)),
-            DoctorCheck("ollama manifests dir", self.config.ollama_manifests_dir.exists(), str(self.config.ollama_manifests_dir)),
-            DoctorCheck("ollama blobs dir", self.config.ollama_blobs_dir.exists(), str(self.config.ollama_blobs_dir)),
-            DoctorCheck("lm studio models dir", self.config.lmstudio_models_dir.exists(), str(self.config.lmstudio_models_dir)),
+            DoctorCheck(
+                "ollama executable",
+                self.config.ollama_exe.exists(),
+                str(self.config.ollama_exe),
+            ),
+            DoctorCheck(
+                "lm studio executable",
+                self.config.lms_exe.exists(),
+                str(self.config.lms_exe),
+            ),
+            DoctorCheck(
+                "ollama manifests dir",
+                self.config.ollama_manifests_dir.exists(),
+                str(self.config.ollama_manifests_dir),
+            ),
+            DoctorCheck(
+                "ollama blobs dir",
+                self.config.ollama_blobs_dir.exists(),
+                str(self.config.ollama_blobs_dir),
+            ),
+            DoctorCheck(
+                "lm studio models dir",
+                self.config.lmstudio_models_dir.exists(),
+                str(self.config.lmstudio_models_dir),
+            ),
             DoctorCheck(
                 "hard-link volume compatibility",
-                self.config.import_staging_dir.drive.lower() == self.config.lmstudio_models_dir.drive.lower(),
+                self.config.import_staging_dir.drive.lower()
+                == self.config.lmstudio_models_dir.drive.lower(),
                 f"{self.config.import_staging_dir.drive} -> {self.config.lmstudio_models_dir.drive}",
             ),
         ]
 
         try:
             version = self.lmstudio.get_version()
-            checks.append(DoctorCheck("lm studio cli version", version is not None, version or "no version output"))
+            checks.append(
+                DoctorCheck(
+                    "lm studio cli version",
+                    version is not None,
+                    version or "no version output",
+                )
+            )
         except Exception as exc:
             checks.append(DoctorCheck("lm studio cli version", False, str(exc)))
 
@@ -169,37 +212,61 @@ class StudioLinkService:
                 DoctorCheck(
                     "lm studio import capabilities",
                     LinkMode.HARD_LINK in capabilities,
-                    ", ".join(sorted(mode.value for mode in capabilities)) if capabilities else "no import modes detected",
+                    ", ".join(sorted(mode.value for mode in capabilities))
+                    if capabilities
+                    else "no import modes detected",
                 )
             )
         except Exception as exc:
             checks.append(DoctorCheck("lm studio import capabilities", False, str(exc)))
 
         discovered = self.scan()
-        checks.append(DoctorCheck("discovered ollama models", bool(discovered), f"{len(discovered)} model(s)"))
-        stale = [model.canonical_name for model in discovered if model.readiness is ModelReadiness.STALE]
+        checks.append(
+            DoctorCheck(
+                "discovered ollama models",
+                bool(discovered),
+                f"{len(discovered)} model(s)",
+            )
+        )
+        stale = [
+            model.canonical_name
+            for model in discovered
+            if model.readiness is ModelReadiness.STALE
+        ]
         checks.append(
             DoctorCheck(
                 "ollama blob presence",
                 not stale,
-                "all discovered models have local blobs" if not stale else ", ".join(stale),
+                "all discovered models have local blobs"
+                if not stale
+                else ", ".join(stale),
             )
         )
 
-        invalid = [model.canonical_name for model in discovered if model.readiness is ModelReadiness.INVALID]
+        invalid = [
+            model.canonical_name
+            for model in discovered
+            if model.readiness is ModelReadiness.INVALID
+        ]
         checks.append(
             DoctorCheck(
                 "gguf header validation",
                 not invalid,
-                "all discovered model blobs passed GGUF validation" if not invalid else ", ".join(invalid),
+                "all discovered model blobs passed GGUF validation"
+                if not invalid
+                else ", ".join(invalid),
             )
         )
 
         alias_check_ok, alias_details = self._check_alias_creation()
-        checks.append(DoctorCheck("import alias directory", alias_check_ok, alias_details))
+        checks.append(
+            DoctorCheck("import alias directory", alias_check_ok, alias_details)
+        )
         return checks
 
-    def _select_models(self, discovered: list[OllamaModel], requested_names: list[str]) -> list[OllamaModel]:
+    def _select_models(
+        self, discovered: list[OllamaModel], requested_names: list[str]
+    ) -> list[OllamaModel]:
         if not requested_names:
             raise ValueError("provide at least one model name or use --all")
 
@@ -219,7 +286,9 @@ class StudioLinkService:
             if not matches:
                 raise ValueError(f"model '{name}' was not found in Ollama manifests")
             if len(matches) > 1:
-                raise ValueError(f"model name '{name}' is ambiguous; use a tag such as '{matches[0].canonical_name}'")
+                raise ValueError(
+                    f"model name '{name}' is ambiguous; use a tag such as '{matches[0].canonical_name}'"
+                )
             selected.append(matches[0])
         return selected
 
@@ -229,7 +298,11 @@ class StudioLinkService:
         alias_path = self.config.import_staging_dir / model.import_filename
         if alias_path.exists():
             return alias_path, False
-        os.link(model.blob_path, alias_path)
+        try:
+            os.link(model.blob_path, alias_path)
+        except OSError as exc:
+            logging.warning("Hard link failed (%s), falling back to copy mode", exc)
+            shutil.copy2(model.blob_path, alias_path)
         return alias_path, True
 
     @staticmethod
@@ -248,7 +321,9 @@ class StudioLinkService:
     def _format_import_message(result: object) -> str:
         stdout = getattr(result, "stdout", "") or ""
         stderr = getattr(result, "stderr", "") or ""
-        text = "\n".join(part.strip() for part in (stdout, stderr) if part and part.strip())
+        text = "\n".join(
+            part.strip() for part in (stdout, stderr) if part and part.strip()
+        )
         return text or "LM Studio import completed"
 
     def _check_alias_creation(self) -> tuple[bool, str]:
