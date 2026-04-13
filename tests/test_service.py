@@ -114,11 +114,8 @@ class StudioLinkServiceTests(unittest.TestCase):
         self.assertEqual(len(self.service.lmstudio.import_calls), 1)
 
     @patch("studiolink.service.os.link")
-    @patch("studiolink.service.shutil.copy2")
-    def test_sync_falls_back_to_copy_when_hard_link_fails(
-        self, mock_copy2: object, mock_link: object
-    ) -> None:
-        """Test that sync falls back to copy mode when hard link fails (e.g., cross-volume)."""
+    def test_sync_raises_error_when_hard_link_fails(self, mock_link: object) -> None:
+        """Test that sync raises RuntimeError instead of falling back to copy when hard link fails."""
         mock_link.side_effect = OSError("Invalid cross-device link")
 
         ready_blob = self.blobs_dir / "sha256-readyblob"
@@ -128,11 +125,9 @@ class StudioLinkServiceTests(unittest.TestCase):
         results = self.service.sync(model_names=["deepseek-r1:8b"], dry_run=True)
 
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].status, "dry-run")
-        # Verify os.link was attempted
+        self.assertEqual(results[0].status, "error")
+        self.assertIn("Use --direct", results[0].message)
         mock_link.assert_called_once()
-        # Verify shutil.copy2 was used as fallback
-        mock_copy2.assert_called_once()
 
     def _write_manifest(self, repository: str, tag: str, digest: str) -> None:
         manifest_path = (
