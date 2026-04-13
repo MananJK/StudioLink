@@ -3,11 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 from datetime import timezone
 
 from studiolink import __version__
 from studiolink.lmstudio_adapter import LMStudioError
-from studiolink.models import DoctorCheck, LinkMode, SyncResult
+from studiolink.models import DoctorCheck, ImportMode, LinkMode, SyncResult
 from studiolink.service import StatusEntry, StudioLinkService
 
 
@@ -53,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument(
         "--symbolic-link", action="store_true", help="Use LM Studio symbolic-link mode."
     )
+    sync_parser.add_argument(
+        "--direct",
+        action="store_true",
+        help="Use Ollama blobs directly (skip import, no extra storage).",
+    )
     sync_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     sync_parser.set_defaults(func=run_sync)
 
@@ -91,13 +97,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return int(args.func(args, service))
     except ValueError as exc:
-        parser.error(str(exc))
+        print(f"Error: {exc}", file=sys.stderr)
         return 2
     except LMStudioError as exc:
-        parser.error(str(exc))
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
     except Exception as exc:
-        parser.error(f"Unexpected error: {exc}")
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
 
 
@@ -122,10 +128,12 @@ def run_scan(args: argparse.Namespace, service: StudioLinkService) -> int:
 
 def run_sync(args: argparse.Namespace, service: StudioLinkService) -> int:
     mode = _resolve_link_mode(args)
+    import_mode = ImportMode.DIRECT if args.direct else ImportMode.ALIAS
     results = service.sync(
         model_names=args.models,
         sync_all=bool(args.all),
         link_mode=mode,
+        import_mode=import_mode,
         dry_run=bool(args.dry_run),
     )
     if args.json:

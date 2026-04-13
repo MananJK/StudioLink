@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +10,7 @@ from studiolink.config import StudioLinkConfig
 from studiolink.lmstudio_adapter import LMStudioAdapter
 from studiolink.models import (
     DoctorCheck,
+    ImportMode,
     LinkMode,
     ModelReadiness,
     OllamaModel,
@@ -75,13 +75,15 @@ class StudioLinkService:
         model_names: list[str] | None = None,
         sync_all: bool = False,
         link_mode: LinkMode | None = None,
+        import_mode: ImportMode = ImportMode.ALIAS,
         dry_run: bool = False,
     ) -> list[SyncResult]:
         logger.debug(
-            "Starting sync: sync_all=%s, dry_run=%s, link_mode=%s",
+            "Starting sync: sync_all=%s, link_mode=%s, import_mode=%s, dry_run=%s",
             sync_all,
-            dry_run,
             link_mode,
+            import_mode,
+            dry_run,
         )
         discovered = self.scan()
         if sync_all:
@@ -151,13 +153,29 @@ class StudioLinkService:
                 )
                 continue
 
-            alias_path, alias_created = self._ensure_import_alias(model)
-            logger.debug(
-                "Importing model via LM Studio: %s (mode=%s, dry_run=%s)",
-                alias_path,
-                mode,
-                dry_run,
-            )
+            if import_mode is ImportMode.DIRECT:
+                alias_path = model.blob_path
+                alias_created = False
+                logger.debug("Using Ollama blob directly: %s", alias_path)
+            else:
+                try:
+                    alias_path, alias_created = self._ensure_import_alias(model)
+                    logger.debug(
+                        "Importing model via LM Studio: %s (mode=%s, dry_run=%s)",
+                        alias_path,
+                        mode,
+                        dry_run,
+                    )
+                except RuntimeError as exc:
+                    logger.debug("Failed to create import alias: %s", exc)
+                    results.append(
+                        SyncResult(
+                            model=model,
+                            status="error",
+                            message=str(exc),
+                        )
+                    )
+                    continue
             try:
                 import_result = self.lmstudio.import_model(
                     str(alias_path),
@@ -169,7 +187,12 @@ class StudioLinkService:
                     "LM Studio import completed: %s", import_result.return_code
                 )
             finally:
-                if dry_run and alias_created and alias_path.exists():
+                if (
+                    dry_run
+                    and alias_created
+                    and alias_path.exists()
+                    and import_mode is not ImportMode.DIRECT
+                ):
                     logger.debug("Cleaning up dry-run alias: %s", alias_path)
                     alias_path.unlink()
 
@@ -357,9 +380,10 @@ class StudioLinkService:
             os.link(model.blob_path, alias_path)
             logger.debug("Created hard link for import alias")
         except OSError as exc:
-            logger.warning("Hard link failed (%s), falling back to copy mode", exc)
-            shutil.copy2(model.blob_path, alias_path)
-            logger.debug("Copied blob to import alias")
+            raise RuntimeError(
+                f"Hard link failed (cross-volume?): {exc}. "
+                f"Use --direct to use Ollama blobs directly instead of importing."
+            )
         return alias_path, True
 
     @staticmethod

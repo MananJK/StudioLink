@@ -20,6 +20,11 @@ class LinkMode(StrEnum):
         }[self]
 
 
+class ImportMode(StrEnum):
+    ALIAS = "alias"  # Use import aliases (hard links) - default
+    DIRECT = "direct"  # Use Ollama blobs directly (no import)
+
+
 class ModelReadiness(StrEnum):
     READY = "ready"
     STALE = "stale"
@@ -46,7 +51,10 @@ class OllamaModel:
     def readiness(self) -> ModelReadiness:
         if self.gguf_valid:
             return ModelReadiness.READY
-        if any("blob is missing from the Ollama blob store" in issue for issue in self.issues):
+        if any(
+            "blob is missing from the Ollama blob store" in issue
+            for issue in self.issues
+        ):
             return ModelReadiness.STALE
         return ModelReadiness.INVALID
 
@@ -71,7 +79,9 @@ class OllamaModel:
     @property
     def import_filename(self) -> str:
         raw = f"{self.canonical_name}-{(self.model_digest or 'unknown').replace(':', '-')[:20]}"
-        safe = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "-" for ch in raw)
+        safe = "".join(
+            ch if ch.isalnum() or ch in ("-", "_", ".") else "-" for ch in raw
+        )
         while "--" in safe:
             safe = safe.replace("--", "-")
         return f"{safe}.gguf"
@@ -110,7 +120,9 @@ class SyncRecord:
             user_repo=str(payload["user_repo"]),
             link_mode=LinkMode(str(payload["link_mode"])),
             imported_at=datetime.fromisoformat(str(payload["imported_at"])),
-            import_command=tuple(str(item) for item in payload.get("import_command", [])),
+            import_command=tuple(
+                str(item) for item in payload.get("import_command", [])
+            ),
         )
 
 
