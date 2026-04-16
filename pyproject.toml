@@ -21,6 +21,11 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.12",
 ]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/MananJK/StudioLink"
+Repository = "https://github.com/MananJK/StudioLink"
 
 [project.scripts]
 sdl = "studiolink.cli:main"
