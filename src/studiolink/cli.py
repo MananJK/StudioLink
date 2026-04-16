@@ -212,7 +212,7 @@ Examples:
 
   studiolink scan                       # List all available models
   studiolink -v scan                    # Scan with debug output
-  studiolink sync <modelname>            # Import a specific model
+  studiolink sync <modelname>           # Import a specific model
   studiolink sync --all                 # Import all discovered models
   studiolink status                     # Check sync status
   studiolink doctor                     # Verify prerequisites

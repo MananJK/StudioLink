@@ -23,7 +23,7 @@ classifiers = [
 ]
 
 [project.scripts]
-studiolink = "studiolink.cli:main"
+sdl = "studiolink.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
