@@ -25,7 +25,7 @@ Before using StudioLink, ensure you have:
 
 ```powershell
 # Clone the repository
-git clone https://github.com/yourusername/StudioLink.git
+git clone https://github.com/MananJK/StudioLink.git
 cd StudioLink
 
 # Install in editable mode
@@ -36,35 +36,35 @@ pip install -e .
 
 ```powershell
 # Scan for available models
-studiolink scan
+sdl scan
 
 # Import a specific model
-studiolink sync <modelname>
+sdl sync <modelname>
 
 # Import all discovered models
-studiolink sync --all
+sdl sync --all
 
 # Check sync status
-studiolink status
+sdl status
 
 # Verify everything is set up correctly
-studiolink doctor
+sdl doctor
 ```
 
 ## Commands
 
-### `studiolink scan`
+### `sdl scan`
 Discover all GGUF-backed Ollama models available for import.
 
 ```powershell
 # Basic scan
-studiolink scan
+sdl scan
 
 # Output as JSON
-studiolink scan --json
+sdl scan --json
 
 # Verbose output (debug logging)
-studiolink -v scan
+sdl -v scan
 ```
 
 **Output:**
@@ -77,27 +77,27 @@ Discovered 3 model(s):
   issues: model blob is missing from the Ollama blob store
 ```
 
-### `studiolink sync`
+### `sdl sync`
 Import one or more models into LM Studio.
 
 ```powershell
 # Import specific model(s)
-studiolink sync <modelname>
-studiolink sync <model1> <model2> <model3>
+sdl sync <modelname>
+sdl sync <model1> <model2> <model3>
 
 # Import all discovered models
-studiolink sync --all
+sdl sync --all
 
 # Preview without making changes (dry run)
-studiolink sync <modelname> --dry-run
+sdl sync <modelname> --dry-run
 
 # Use a specific link mode
-studiolink sync <modelname> --hard-link
-studiolink sync <modelname> --copy
-studiolink sync <modelname> --symbolic-link
+sdl sync <modelname> --hard-link
+sdl sync <modelname> --copy
+sdl sync <modelname> --symbolic-link
 
 # Verbose output
-studiolink -v sync --all
+sdl -v sync --all
 ```
 
 **Options:**
@@ -107,13 +107,13 @@ studiolink -v sync --all
 - `--hard-link` - Force hard link mode (default)
 - `--symbolic-link` - Use symbolic links
 
-### `studiolink status`
+### `sdl status`
 Show discovered models and their sync state.
 
 ```powershell
-studiolink status
-studiolink status --json
-studiolink -v status
+sdl status
+sdl status --json
+sdl -v status
 ```
 
 **Output:**
@@ -126,12 +126,12 @@ Discovered 3 model(s); 1 tracked as synced.
 - <modelname3>: pending
 ```
 
-### `studiolink doctor`
+### `sdl doctor`
 Check local StudioLink prerequisites and diagnose issues.
 
 ```powershell
-studiolink doctor
-studiolink doctor --json
+sdl doctor
+sdl doctor --json
 ```
 
 **Checks include:**
@@ -144,11 +144,11 @@ studiolink doctor --json
 - Blob presence validation
 - GGUF header validation
 
-### `studiolink help`
+### `sdl help`
 Show all available commands and their descriptions.
 
 ```powershell
-studiolink help
+sdl help
 ```
 
 ## Global Options
@@ -161,9 +161,9 @@ All commands support these global options:
 
 ```powershell
 # Examples
-studiolink -v scan              # Scan with debug logging
-studiolink sync --help          # Show help for sync command
-studiolink --version            # Show version
+sdl -v scan              # Scan with debug logging
+sdl sync --help          # Show help for sync command
+sdl --version            # Show version
 ```
 
 ## Model Readiness States
@@ -176,7 +176,7 @@ When scanning or checking status, models can have these states:
 | **stale** | Manifest exists but blob is missing | Run `ollama pull <model>` to restore |
 | **invalid** | Blob exists but missing GGUF magic bytes | Model may be corrupted |
 | **synced** | Already imported into LM Studio | No action needed |
-| **pending** | Ready but not yet synced | Run `studiolink sync` |
+| **pending** | Ready but not yet synced | Run `sdl sync` |
 
 ## Configuration
 
@@ -188,16 +188,16 @@ StudioLink uses the following default paths (Windows):
 | LM Studio CLI | `~\.lmstudio\bin\lms.exe` | `STUDIOLINK_LMS_EXE` |
 | Ollama models | `~\.ollama\models` | `STUDIOLINK_OLLAMA_MODELS_DIR` |
 | LM Studio models | `~\.lmstudio\models` | `STUDIOLINK_LMSTUDIO_MODELS_DIR` |
-| State directory | `~\.studiolink` | `STUDIOLINK_STATE_DIR` |
+| State directory | `~\.sdl` | `STUDIOLINK_STATE_DIR` |
 
 ## How It Works
 
 1. **Scanning** - Reads Ollama manifest files from `~/.ollama/models/manifests/` to discover models
 2. **Blob Resolution** - Locates GGUF blobs in `~/.ollama/models/blobs/` by digest
 3. **Validation** - Verifies blobs start with GGUF magic bytes
-4. **Import Aliases** - Creates human-readable `.gguf` aliases in `~/.studiolink/imports/`
+4. **Import Aliases** - Creates human-readable `.gguf` aliases in `~/.sdl/imports/`
 5. **LM Studio Import** - Uses `lms import` CLI to import models
-6. **State Tracking** - Saves sync records to `~/.studiolink/state.json`
+6. **State Tracking** - Saves sync records to `~/.sdl/state.json`
 
 ## Troubleshooting
 
@@ -211,7 +211,7 @@ ollama pull <model-name>
 StudioLink automatically falls back to copy mode if hard links fail (e.g., Ollama and StudioLink state are on different drives). Use `--verbose` to see the fallback in action.
 
 ### LM Studio import fails
-Run `studiolink doctor` to verify:
+Run `sdl doctor` to verify:
 - LM Studio is installed
 - `lms` CLI is in PATH
 - Import directories are writable
