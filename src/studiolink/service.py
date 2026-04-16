@@ -85,6 +85,10 @@ class StudioLinkService:
             import_mode,
             dry_run,
         )
+        if not self.lmstudio.is_running():
+            raise RuntimeError(
+                "LM Studio is not running. Please open LM Studio and try again."
+            )
         discovered = self.scan()
         if sync_all:
             selected = discovered

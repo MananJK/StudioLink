@@ -17,6 +17,9 @@ class FakeLMStudioAdapter:
     def __init__(self) -> None:
         self.import_calls: list[tuple[str, str, LinkMode, bool]] = []
 
+    def is_running(self) -> bool:
+        return True
+
     def get_version(self) -> str:
         return "CLI commit: test"
 

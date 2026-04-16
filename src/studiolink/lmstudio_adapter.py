@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import socket
 import subprocess
+from typing import Any
 
 from studiolink.config import StudioLinkConfig
 from studiolink.models import ImportResult, LinkMode
+
+LM_STUDIO_PORT = 1234
+DEFAULT_TIMEOUT = 60
 
 
 class LMStudioError(Exception):
@@ -21,6 +26,17 @@ class LMStudioError(Exception):
 class LMStudioAdapter:
     def __init__(self, config: StudioLinkConfig) -> None:
         self.config = config
+
+    def is_running(self) -> bool:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        try:
+            result = sock.connect_ex(("127.0.0.1", LM_STUDIO_PORT))
+            return result == 0
+        except socket.error:
+            return False
+        finally:
+            sock.close()
 
     def get_version(self) -> str | None:
         try:
@@ -94,10 +110,13 @@ class LMStudioAdapter:
         )
 
     @staticmethod
-    def _run(command: list[str], *, check: bool) -> subprocess.CompletedProcess[str]:
+    def _run(
+        command: list[str], *, check: bool, timeout: int = DEFAULT_TIMEOUT
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             command,
             capture_output=True,
             text=True,
             check=check,
+            timeout=timeout,
         )
