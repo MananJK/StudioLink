@@ -14,7 +14,7 @@ from studiolink.service import StatusEntry, StudioLinkService
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="studiolink",
+        prog="sdl",
         description="Sync Ollama-downloaded GGUF models into LM Studio.",
     )
     parser.add_argument(
@@ -34,9 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser = subparsers.add_parser(
         "sync", help="Import one or more models into LM Studio."
     )
-    sync_parser.add_argument(
-        "models", nargs="*", help="Model names from `studiolink scan`."
-    )
+    sync_parser.add_argument("models", nargs="*", help="Model names from `sdl scan`.")
     sync_parser.add_argument(
         "--all", action="store_true", help="Sync every discovered model."
     )
@@ -188,17 +186,17 @@ def run_help(args: argparse.Namespace, service: StudioLinkService) -> int:
 Available Commands:
 
   scan              Discover GGUF-backed Ollama models.
-                    Usage: studiolink scan [--json] [-v]
+                    Usage: sdl scan [--json] [-v]
 
   sync              Import one or more models into LM Studio.
-                    Usage: studiolink sync <model> [<model>...] [--copy|--hard-link|--symbolic-link] [--dry-run] [-v]
-                           studiolink sync --all [--copy|--hard-link|--symbolic-link] [--dry-run] [-v]
+                    Usage: sdl sync <model> [<model>...] [--copy|--hard-link|--symbolic-link] [--dry-run] [-v]
+                           sdl sync --all [--copy|--hard-link|--symbolic-link] [--dry-run] [-v]
 
   status            Show discovered models and sync state.
-                    Usage: studiolink status [--json] [-v]
+                    Usage: sdl status [--json] [-v]
 
   doctor            Check local StudioLink prerequisites.
-                    Usage: studiolink doctor [--json] [-v]
+                    Usage: sdl doctor [--json] [-v]
 
   help              Show this help message.
 
@@ -210,15 +208,15 @@ Global Options:
 
 Examples:
 
-  studiolink scan                       # List all available models
-  studiolink -v scan                    # Scan with debug output
-  studiolink sync <modelname>           # Import a specific model
-  studiolink sync --all                 # Import all discovered models
-  studiolink status                     # Check sync status
-  studiolink doctor                     # Verify prerequisites
+  sdl scan                       # List all available models
+  sdl -v scan                    # Scan with debug output
+  sdl sync <modelname>           # Import a specific model
+  sdl sync --all                 # Import all discovered models
+  sdl status                     # Check sync status
+  sdl doctor                     # Verify prerequisites
 
 For more help on a specific command:
-  studiolink <command> --help
+  sdl <command> --help
 """
     print(help_text)
     return 0
