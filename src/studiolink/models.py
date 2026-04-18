@@ -78,7 +78,7 @@ class OllamaModel:
 
     @property
     def import_filename(self) -> str:
-        raw = f"{self.canonical_name}-{(self.model_digest or 'unknown').replace(':', '-')[:20]}"
+        raw = f"{self.canonical_name}-{(self.model_digest or 'unknown').replace(':', '-')[:5]}"
         safe = "".join(
             ch if ch.isalnum() or ch in ("-", "_", ".") else "-" for ch in raw
         )
