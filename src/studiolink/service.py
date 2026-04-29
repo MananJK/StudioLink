@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +19,7 @@ from studiolink.models import (
     SyncResult,
 )
 from studiolink.state import StateStore
+from studiolink.syncer import Syncer
 
 if TYPE_CHECKING:
     from studiolink.ports import LMStudioPort, OllamaPort
@@ -94,7 +94,9 @@ class StudioLinkService:
             import_mode,
             dry_run,
         )
+
         discovered = self.scan()
+
         if sync_all:
             selected = discovered
             logger.debug("Syncing all %d discovered model(s)", len(selected))
@@ -104,138 +106,9 @@ class StudioLinkService:
                 "Syncing selected model(s): %s", [m.canonical_name for m in selected]
             )
 
-        records = self.state.load()
-        logger.debug("Loaded %d existing sync record(s)", len(records))
         mode = link_mode or self.config.default_link_mode
-        results: list[SyncResult] = []
-
-        for model in selected:
-            logger.debug(
-                "Processing model: %s (readiness=%s)",
-                model.canonical_name,
-                model.readiness,
-            )
-            existing = records.get(model.canonical_name)
-            if self._is_currently_synced(model, existing):
-                logger.debug(
-                    "Model %s is already synced, skipping", model.canonical_name
-                )
-                results.append(
-                    SyncResult(
-                        model=model,
-                        status="skipped",
-                        message="already synced according to StudioLink state",
-                        record=existing,
-                    )
-                )
-                continue
-
-            if model.readiness is ModelReadiness.STALE:
-                logger.debug("Model %s is stale (blob missing)", model.canonical_name)
-                results.append(
-                    SyncResult(
-                        model=model,
-                        status="error",
-                        message=(
-                            "model blob is missing from the Ollama blob store; "
-                            f"run `ollama pull {model.canonical_name}` to restore it"
-                        ),
-                    )
-                )
-                continue
-
-            if (
-                model.readiness is ModelReadiness.INVALID
-                or model.blob_path is None
-                or model.model_digest is None
-            ):
-                logger.debug(
-                    "Model %s is invalid: %s", model.canonical_name, model.issues
-                )
-                results.append(
-                    SyncResult(
-                        model=model,
-                        status="error",
-                        message="model is not ready for import: "
-                        + "; ".join(model.issues or ("unknown error",)),
-                    )
-                )
-                continue
-
-            if import_mode is ImportMode.DIRECT:
-                alias_path = model.blob_path
-                alias_created = False
-                logger.debug("Using Ollama blob directly: %s", alias_path)
-            else:
-                try:
-                    alias_path, alias_created = self._ensure_import_alias(model)
-                    logger.debug(
-                        "Importing model via LM Studio: %s (mode=%s, dry_run=%s)",
-                        alias_path,
-                        mode,
-                        dry_run,
-                    )
-                except RuntimeError as exc:
-                    logger.debug("Failed to create import alias: %s", exc)
-                    results.append(
-                        SyncResult(
-                            model=model,
-                            status="error",
-                            message=str(exc),
-                        )
-                    )
-                    continue
-            try:
-                import_result = self.lmstudio.import_model(
-                    str(alias_path),
-                    user_repo=model.user_repo,
-                    link_mode=mode,
-                    dry_run=dry_run,
-                )
-                logger.debug(
-                    "LM Studio import completed: %s", import_result.return_code
-                )
-            finally:
-                if (
-                    dry_run
-                    and alias_created
-                    and alias_path.exists()
-                    and import_mode is not ImportMode.DIRECT
-                ):
-                    logger.debug("Cleaning up dry-run alias: %s", alias_path)
-                    alias_path.unlink()
-
-            record = SyncRecord(
-                canonical_name=model.canonical_name,
-                digest=model.model_digest,
-                blob_path=model.blob_path,
-                import_alias_path=alias_path,
-                user_repo=model.user_repo,
-                link_mode=mode,
-                imported_at=datetime.now(tz=timezone.utc),
-                import_command=import_result.command,
-            )
-
-            if not dry_run:
-                records[record.canonical_name] = record
-                self.state.save(records)
-                logger.debug("Saved sync record for %s", model.canonical_name)
-
-            results.append(
-                SyncResult(
-                    model=model,
-                    status="dry-run" if dry_run else "synced",
-                    message=self._format_import_message(import_result),
-                    record=record,
-                )
-            )
-            logger.debug(
-                "Model %s sync completed with status: %s",
-                model.canonical_name,
-                results[-1].status,
-            )
-
-        return results
+        syncer = Syncer(self.config, self.lmstudio, self.state)
+        return syncer.sync(selected, mode, import_mode, dry_run)
 
     def doctor(self) -> list[DoctorCheck]:
         checks = [
@@ -292,62 +165,66 @@ class StudioLinkService:
             checks.append(
                 DoctorCheck(
                     "lm studio import capabilities",
-                    LinkMode.HARD_LINK in capabilities,
-                    ", ".join(sorted(mode.value for mode in capabilities))
-                    if capabilities
-                    else "no import modes detected",
+                    bool(capabilities),
+                    ", ".join(sorted(c.value for c in capabilities)) or "none",
                 )
             )
         except Exception as exc:
             logger.debug("Doctor: LM Studio capabilities check failed: %s", exc)
-            checks.append(DoctorCheck("lm studio import capabilities", False, str(exc)))
+            checks.append(
+                DoctorCheck("lm studio import capabilities", False, str(exc))
+            )
 
-        discovered = self.scan()
-        logger.debug("Doctor: discovered %d model(s)", len(discovered))
+        models = self.scan()
         checks.append(
             DoctorCheck(
                 "discovered ollama models",
-                bool(discovered),
-                f"{len(discovered)} model(s)",
+                True,
+                f"{len(models)} model(s)",
             )
         )
-        stale = [
-            model.canonical_name
-            for model in discovered
-            if model.readiness is ModelReadiness.STALE
+
+        stale_models = [
+            m for m in models if m.readiness is ModelReadiness.STALE
         ]
-        logger.debug("Doctor: found %d stale model(s)", len(stale))
         checks.append(
             DoctorCheck(
                 "ollama blob presence",
-                not stale,
-                "all discovered models have local blobs"
-                if not stale
-                else ", ".join(stale),
+                not stale_models,
+                ", ".join(m.canonical_name for m in stale_models)
+                if stale_models
+                else "all present",
             )
         )
 
-        invalid = [
-            model.canonical_name
-            for model in discovered
-            if model.readiness is ModelReadiness.INVALID
-        ]
-        logger.debug("Doctor: found %d invalid model(s)", len(invalid))
+        valid_gguf = [m for m in models if m.gguf_valid]
         checks.append(
             DoctorCheck(
                 "gguf header validation",
-                not invalid,
-                "all discovered model blobs passed GGUF validation"
-                if not invalid
-                else ", ".join(invalid),
+                len(valid_gguf) == len(models),
+                f"{len(valid_gguf)}/{len(models)} passed validation",
             )
         )
 
-        alias_check_ok, alias_details = self._check_alias_creation()
         checks.append(
-            DoctorCheck("import alias directory", alias_check_ok, alias_details)
+            DoctorCheck(
+                "import alias directory",
+                self.config.import_staging_dir.exists(),
+                str(self.config.import_staging_dir),
+            )
         )
+
         return checks
+
+    @staticmethod
+    def _is_currently_synced(model: OllamaModel, record: SyncRecord | None) -> bool:
+        if record is None:
+            return False
+        if record.digest != model.model_digest:
+            return False
+        if record.link_mode is None:
+            return False
+        return True
 
     def _select_models(
         self, discovered: list[OllamaModel], requested_names: list[str]
@@ -369,61 +246,10 @@ class StudioLinkService:
         for name in requested_names:
             matches = lookup.get(name, [])
             if not matches:
-                raise ValueError(f"model '{name}' was not found in Ollama manifests")
-            if len(matches) > 1:
+                available = ", ".join(sorted(lookup.keys()))
                 raise ValueError(
-                    f"model name '{name}' is ambiguous; use a tag such as '{matches[0].canonical_name}'"
+                    f"model not found: {name}. Available: {available}"
                 )
-            selected.append(matches[0])
+            selected.extend(matches)
+
         return selected
-
-    def _ensure_import_alias(self, model: OllamaModel) -> tuple[Path, bool]:
-        assert model.blob_path is not None
-        self.config.import_staging_dir.mkdir(parents=True, exist_ok=True)
-        alias_path = self.config.import_staging_dir / model.import_filename
-        logger.debug("Creating import alias: %s -> %s", model.blob_path, alias_path)
-        if alias_path.exists():
-            logger.debug("Import alias already exists: %s", alias_path)
-            return alias_path, False
-        try:
-            os.link(model.blob_path, alias_path)
-            logger.debug("Created hard link for import alias")
-        except OSError as exc:
-            raise RuntimeError(
-                f"Hard link failed (cross-volume?): {exc}. "
-                f"Use --direct to use Ollama blobs directly instead of importing."
-            )
-        return alias_path, True
-
-    @staticmethod
-    def _is_currently_synced(model: OllamaModel, record: SyncRecord | None) -> bool:
-        if model.readiness is not ModelReadiness.READY:
-            return False
-        if record is None:
-            return False
-        if record.digest != model.model_digest:
-            return False
-        if not record.import_alias_path.exists():
-            return False
-        return True
-
-    @staticmethod
-    def _format_import_message(result: object) -> str:
-        stdout = getattr(result, "stdout", "") or ""
-        stderr = getattr(result, "stderr", "") or ""
-        text = "\n".join(
-            part.strip() for part in (stdout, stderr) if part and part.strip()
-        )
-        return text or "LM Studio import completed"
-
-    def _check_alias_creation(self) -> tuple[bool, str]:
-        logger.debug(
-            "Checking import staging directory: %s", self.config.import_staging_dir
-        )
-        try:
-            self.config.import_staging_dir.mkdir(parents=True, exist_ok=True)
-            logger.debug("Import staging directory ready")
-        except OSError as exc:
-            logger.error("Failed to create import staging directory: %s", exc)
-            return False, str(exc)
-        return True, str(self.config.import_staging_dir)
