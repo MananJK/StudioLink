@@ -16,7 +16,7 @@ env/
 htmlcov/
 
 # Local StudioLink working data
-.studiolink-data/
+.studiolink/
 
 # OS/editor noise
 .DS_Store
@@ -24,3 +24,6 @@ Thumbs.db
 
 # Testing
 tests/
+
+# Install
+src/studiolink.egg-info/
