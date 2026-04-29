@@ -66,7 +66,7 @@ class StudioLinkService:
 
     def status(self) -> list[StatusEntry]:
         models = self.scan()
-        records = self.state.load()
+        records = self.state.get_all_records()
         return [
             StatusEntry(
                 model=model,

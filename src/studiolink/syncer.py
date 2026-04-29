@@ -15,6 +15,7 @@ from studiolink.models import (
 from studiolink.ports import LMStudioPort
 from studiolink.state import StateStore
 logger = logging.getLogger("studiolink")
+
 class Syncer:
     def __init__(
         self,
@@ -25,6 +26,7 @@ class Syncer:
         self.config = config
         self.lmstudio = lmstudio
         self.state = state
+
     def sync(
         self,
         models: list[OllamaModel],
@@ -39,7 +41,7 @@ class Syncer:
             import_mode,
             dry_run,
         )
-        records = self.state.load()
+        records = self.state.get_all_records()
         logger.debug("Loaded %d existing sync record(s)", len(records))
         results: list[SyncResult] = []
         for model in models:
@@ -52,6 +54,7 @@ class Syncer:
                 self.state.save(records)
                 logger.debug("Saved sync record for %s", model.canonical_name)
         return results
+    
     def _sync_one(
         self,
         model: OllamaModel,
@@ -151,17 +154,21 @@ class Syncer:
             message=self._format_import_message(import_result),
             record=record,
         )
+    
     def _ensure_import_alias(self, model: OllamaModel) -> tuple[Path, bool]:
         return SyncerAdapter._ensure_import_alias_static(
             model, self.config.import_staging_dir
         )
+    
     @staticmethod
     def _is_currently_synced(model: OllamaModel, record: SyncRecord | None) -> bool:
         return SyncerAdapter._is_currently_synced_static(model, record)
+    
     @staticmethod
     def _format_import_message(result: object) -> str:
         return SyncerAdapter._format_import_message_static(result)
 class SyncerAdapter:
+
     @staticmethod
     def _ensure_import_alias_static(
         model: OllamaModel, staging_dir: Path
@@ -181,6 +188,7 @@ class SyncerAdapter:
             raise RuntimeError(
                 f"Failed to create import alias (hard link): {exc}"
             ) from exc
+        
     @staticmethod
     def _is_currently_synced_static(model: OllamaModel, record: SyncRecord | None) -> bool:
         if record is None:
@@ -190,6 +198,7 @@ class SyncerAdapter:
         if record.link_mode is None:
             return False
         return True
+    
     @staticmethod
     def _format_import_message_static(result: object) -> str:
         return "imported successfully"
