@@ -16,12 +16,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sdl",
         description="Sync Ollama-downloaded GGUF models into LM Studio.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        add_help=False,
     )
     parser.add_argument(
-        "--version", action="version", version=f"%(prog)s {__version__}"
-    )
-    parser.add_argument(
-        "-v", "--verbose", action="store_true", help="Enable verbose output."
+        "-h",
+        "--help",
+        action="store_true",
+        help="Show this help message and exit.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -79,10 +81,60 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _preparse_args(argv: list[str] | None) -> tuple[argparse.Namespace | None, bool]:
+    """Pre-parse args to handle help/version before subparsers."""
+    parser = argparse.ArgumentParser(
+        prog="sdl",
+        add_help=False,
+    )
+    parser.add_argument("-h", "--help", action="store_true")
+    parser.add_argument("--version", action="store_true")
+    parser.add_argument("-v", "--verbose", action="store_true")
+
+    import io
+    from contextlib import redirect_stderr
+
+    try:
+        with redirect_stderr(io.StringIO()):
+            args = parser.parse_args(argv)
+    except SystemExit:
+        return None, True
+
+    if args.help or args.version:
+        return args, False
+
+    return args, True
+
+
 def main(argv: list[str] | None = None) -> int:
+    preparsed, should_continue = _preparse_args(argv)
+
+    if preparsed is None and not should_continue:
+        build_parser().print_help()
+        return 0
+
+    if preparsed and (preparsed.help or preparsed.version):
+        parser = build_parser()
+        if preparsed.version:
+            print(f"sdl {__version__}")
+            return 0
+        parser.print_help()
+        return 0
+
     parser = build_parser()
-    args = parser.parse_args(argv)
-    if args.verbose:
+
+    import io
+    from contextlib import redirect_stderr
+
+    try:
+        with redirect_stderr(io.StringIO()):
+            args = parser.parse_args(argv)
+    except SystemExit:
+        print("Error: Invalid command. Use 'sdl --help' for available commands.", file=sys.stderr)
+        return 1
+
+    verbose = getattr(args, "verbose", False) or (preparsed and preparsed.verbose)
+    if verbose:
         logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
     else:
         logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
