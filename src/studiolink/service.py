@@ -5,9 +5,11 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from studiolink.config import StudioLinkConfig
+from studiolink.ollama_adapter import OllamaAdapter
 from studiolink.lmstudio_adapter import LMStudioAdapter
+from studiolink.config import StudioLinkConfig
 from studiolink.models import (
     DoctorCheck,
     ImportMode,
@@ -17,8 +19,10 @@ from studiolink.models import (
     SyncRecord,
     SyncResult,
 )
-from studiolink.ollama_adapter import OllamaAdapter
 from studiolink.state import StateStore
+
+if TYPE_CHECKING:
+    from studiolink.ports import LMStudioPort, OllamaPort
 
 logger = logging.getLogger("studiolink")
 
@@ -41,10 +45,15 @@ class StatusEntry:
 
 
 class StudioLinkService:
-    def __init__(self, config: StudioLinkConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: StudioLinkConfig | None = None,
+        ollama: "OllamaPort | None" = None,
+        lmstudio: "LMStudioPort | None" = None,
+    ) -> None:
         self.config = config or StudioLinkConfig.from_env()
-        self.ollama = OllamaAdapter(self.config)
-        self.lmstudio = LMStudioAdapter(self.config)
+        self.ollama = ollama if ollama else OllamaAdapter(self.config)
+        self.lmstudio = lmstudio if lmstudio else LMStudioAdapter(self.config)
         self.state = StateStore(self.config.state_file)
 
     def scan(self) -> list[OllamaModel]:
