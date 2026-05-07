@@ -126,6 +126,17 @@ class SyncRecord:
         )
 
 
+def is_synced(model: OllamaModel, record: SyncRecord | None) -> bool:
+    """Check if the sync record matches current model state."""
+    if record is None:
+        return False
+    if record.digest != model.model_digest:
+        return False
+    if record.link_mode is None:
+        return False
+    return True
+
+
 @dataclass(slots=True, frozen=True)
 class ImportResult:
     command: tuple[str, ...]

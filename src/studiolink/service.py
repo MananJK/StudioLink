@@ -12,6 +12,7 @@ from studiolink.config import StudioLinkConfig
 from studiolink.models import (
     DoctorCheck,
     ImportMode,
+    is_synced,
     LinkMode,
     ModelReadiness,
     OllamaModel,
@@ -70,7 +71,7 @@ class StudioLinkService:
         return [
             StatusEntry(
                 model=model,
-                synced=self._is_currently_synced(
+                synced=is_synced(
                     model, records.get(model.canonical_name)
                 ),
                 sync_record=records.get(model.canonical_name),
@@ -215,16 +216,6 @@ class StudioLinkService:
         )
 
         return checks
-
-    @staticmethod
-    def _is_currently_synced(model: OllamaModel, record: SyncRecord | None) -> bool:
-        if record is None:
-            return False
-        if record.digest != model.model_digest:
-            return False
-        if record.link_mode is None:
-            return False
-        return True
 
     def _select_models(
         self, discovered: list[OllamaModel], requested_names: list[str]

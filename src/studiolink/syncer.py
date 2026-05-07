@@ -1,11 +1,14 @@
 from __future__ import annotations
+
 import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+
 from studiolink.config import StudioLinkConfig
 from studiolink.models import (
     ImportMode,
+    is_synced,
     LinkMode,
     ModelReadiness,
     OllamaModel,
@@ -14,7 +17,9 @@ from studiolink.models import (
 )
 from studiolink.ports import LMStudioPort
 from studiolink.state import StateStore
+
 logger = logging.getLogger("studiolink")
+
 
 class Syncer:
     def __init__(
@@ -45,16 +50,14 @@ class Syncer:
         logger.debug("Loaded %d existing sync record(s)", len(records))
         results: list[SyncResult] = []
         for model in models:
-            result = self._sync_one(
-                model, records, link_mode, import_mode, dry_run
-            )
+            result = self._sync_one(model, records, link_mode, import_mode, dry_run)
             results.append(result)
             if result.record and not dry_run:
                 records[result.record.canonical_name] = result.record
                 self.state.save(records)
                 logger.debug("Saved sync record for %s", model.canonical_name)
         return results
-    
+
     def _sync_one(
         self,
         model: OllamaModel,
@@ -69,7 +72,7 @@ class Syncer:
             model.readiness,
         )
         existing = records.get(model.canonical_name)
-        if self._is_currently_synced(model, existing):
+        if is_synced(model, existing):
             logger.debug("Model %s is already synced, skipping", model.canonical_name)
             return SyncResult(
                 model=model,
@@ -126,9 +129,7 @@ class Syncer:
                 link_mode=link_mode,
                 dry_run=dry_run,
             )
-            logger.debug(
-                "LM Studio import completed: %s", import_result.return_code
-            )
+            logger.debug("LM Studio import completed: %s", import_result.return_code)
         finally:
             if (
                 dry_run
@@ -154,51 +155,34 @@ class Syncer:
             message=self._format_import_message(import_result),
             record=record,
         )
-    
+
     def _ensure_import_alias(self, model: OllamaModel) -> tuple[Path, bool]:
-        return SyncerAdapter._ensure_import_alias_static(
-            model, self.config.import_staging_dir
-        )
-    
-    @staticmethod
-    def _is_currently_synced(model: OllamaModel, record: SyncRecord | None) -> bool:
-        return SyncerAdapter._is_currently_synced_static(model, record)
-    
-    @staticmethod
-    def _format_import_message(result: object) -> str:
-        return SyncerAdapter._format_import_message_static(result)
-class SyncerAdapter:
+        return _ensure_import_alias(model, self.config.import_staging_dir)
 
     @staticmethod
-    def _ensure_import_alias_static(
-        model: OllamaModel, staging_dir: Path
-    ) -> tuple[Path, bool]:
-        alias_path = staging_dir / model.import_filename
-        if alias_path.exists():
-            logger.debug("Import alias already exists: %s", alias_path)
-            return alias_path, False
-        if model.blob_path is None:
-            raise RuntimeError(f"No blob path for model {model.canonical_name}")
-        staging_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            os.link(model.blob_path, alias_path)
-            logger.debug("Created hard link: %s -> %s", alias_path, model.blob_path)
-            return alias_path, True
-        except OSError as exc:
-            raise RuntimeError(
-                f"Failed to create import alias (hard link): {exc}"
-            ) from exc
-        
-    @staticmethod
-    def _is_currently_synced_static(model: OllamaModel, record: SyncRecord | None) -> bool:
-        if record is None:
-            return False
-        if record.digest != model.model_digest:
-            return False
-        if record.link_mode is None:
-            return False
-        return True
-    
-    @staticmethod
-    def _format_import_message_static(result: object) -> str:
-        return "imported successfully"
+    def _format_import_message(result: object) -> str:
+        return _format_import_message(result)
+
+
+def _ensure_import_alias(
+    model: OllamaModel, staging_dir: Path
+) -> tuple[Path, bool]:
+    alias_path = staging_dir / model.import_filename
+    if alias_path.exists():
+        logger.debug("Import alias already exists: %s", alias_path)
+        return alias_path, False
+    if model.blob_path is None:
+        raise RuntimeError(f"No blob path for model {model.canonical_name}")
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        os.link(model.blob_path, alias_path)
+        logger.debug("Created hard link: %s -> %s", alias_path, model.blob_path)
+        return alias_path, True
+    except OSError as exc:
+        raise RuntimeError(
+            f"Failed to create import alias (hard link): {exc}"
+        ) from exc
+
+
+def _format_import_message(result: object) -> str:
+    return "imported successfully"
