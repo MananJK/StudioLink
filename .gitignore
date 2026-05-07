@@ -27,3 +27,7 @@ tests/
 
 # Install
 src/studiolink.egg-info/
+
+# Deployment
+dist/
+build/
