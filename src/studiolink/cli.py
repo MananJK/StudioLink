@@ -15,15 +15,18 @@ from studiolink.service import StatusEntry, StudioLinkService
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sdl",
-        description="Sync Ollama-downloaded GGUF models into LM Studio.",
+        usage="sdl [-v] [--version] [--help] <command> [<args>]",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=False,
     )
     parser.add_argument(
-        "-h",
-        "--help",
-        action="store_true",
-        help="Show this help message and exit.",
+        "-v", action="store_true", help="Enable verbose output (debug logging)."
+    )
+    parser.add_argument(
+        "--version", action="store_true", help="Show version information."
+    )
+    parser.add_argument(
+        "--help", action="store_true", help="Show this help message and exit."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -73,11 +76,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     doctor_parser.set_defaults(func=run_doctor)
-
-    help_parser = subparsers.add_parser(
-        "help", help="Show all available commands and their descriptions."
-    )
-    help_parser.set_defaults(func=run_help)
     return parser
 
 
@@ -85,11 +83,13 @@ def _preparse_args(argv: list[str] | None) -> tuple[argparse.Namespace | None, b
     """Pre-parse args to handle help/version before subparsers."""
     parser = argparse.ArgumentParser(
         prog="sdl",
+        usage="sdl [-v] [--version] [--help] <command> [<args>]",
         add_help=False,
     )
-    parser.add_argument("-h", "--help", action="store_true")
     parser.add_argument("--version", action="store_true")
-    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--help", action="store_true")
+    parser.add_argument("-v", action="store_true")
+    parser.add_argument("command", nargs="?", choices=["scan", "sync", "status", "doctor"])
 
     import io
     from contextlib import redirect_stderr
@@ -116,10 +116,11 @@ def main(argv: list[str] | None = None) -> int:
     if preparsed and (preparsed.help or preparsed.version):
         parser = build_parser()
         if preparsed.version:
-            print(f"sdl {__version__}")
+            print(f"StudioLink {__version__}")
             return 0
-        parser.print_help()
-        return 0
+        if preparsed.help:
+            build_parser().print_help()
+            return 0
 
     parser = build_parser()
 
@@ -130,14 +131,19 @@ def main(argv: list[str] | None = None) -> int:
         with redirect_stderr(io.StringIO()):
             args = parser.parse_args(argv)
     except SystemExit:
-        print("Error: Invalid command. Use 'sdl --help' for available commands.", file=sys.stderr)
+        print(
+            "Error: Invalid command. Use 'sdl --help' for available commands.",
+            file=sys.stderr,
+        )
         return 1
 
-    verbose = getattr(args, "verbose", False) or (preparsed and preparsed.verbose)
+    verbose = (preparsed and getattr(preparsed, "v", False)) or (args and getattr(args, "verbose", False))
     if verbose:
         logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
+        logging.getLogger("studiolink").setLevel(logging.DEBUG)
     else:
         logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
+        logging.getLogger("studiolink").setLevel(logging.WARNING)
     service = StudioLinkService()
     logging.debug("Configuration loaded:")
     logging.debug("  Ollama manifests: %s", service.config.ollama_manifests_dir)
