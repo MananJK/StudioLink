@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import subprocess
 import sys
+import urllib.request
 from datetime import timezone
 
 from studiolink import __version__
@@ -76,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     doctor_parser.set_defaults(func=run_doctor)
+
+    upgrade_parser = subparsers.add_parser(
+        "upgrade", help="Check for and install newer StudioLink version."
+    )
+    upgrade_parser.set_defaults(func=run_upgrade)
     return parser
 
 
@@ -236,6 +243,34 @@ def run_doctor(args: argparse.Namespace, service: StudioLinkService) -> int:
         prefix = "OK" if check.ok else "FAIL"
         print(f"- {prefix}: {check.name} -> {check.details}")
     return 0 if all(check.ok for check in checks) else 1
+
+
+def run_upgrade(args: argparse.Namespace, service: StudioLinkService) -> int:
+    try:
+        url = "https://pypi.org/pypi/studiolink/json"
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            data = json.loads(resp.read())
+            latest = data["info"]["version"]
+    except Exception as e:
+        print(f"Error: Could not check for updates: {e}", file=sys.stderr)
+        return 1
+
+    current = __version__
+
+    if latest > current:
+        try:
+            subprocess.run(
+                ["pip", "install", "studiolink", "--upgrade", "--quiet"],
+                check=True,
+            )
+            print(f"Upgraded from {current} to {latest}")
+        except subprocess.CalledProcessError:
+            print(f"Error: Failed to upgrade", file=sys.stderr)
+            return 1
+    else:
+        print(f"Already on latest version: {current}")
+
+    return 0
 
 
 def run_help(args: argparse.Namespace, service: StudioLinkService) -> int:
