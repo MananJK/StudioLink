@@ -23,16 +23,12 @@ Before using StudioLink, ensure you have:
 
 ## Installation
 
-> **PyPI install coming soon!** For now, install from source:
-
 ```powershell
-# Clone the repository
-git clone https://github.com/MananJK/StudioLink.git
-cd StudioLink
-
-# Install in editable mode
-pip install -e .
+pip install studiolink
 ```
+
+To upgrade to the latest version:
+sdl upgrade
 
 ## Quick Start
 
