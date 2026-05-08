@@ -44,6 +44,10 @@ class StateStore:
         """Save all sync records at once (bulk operation)."""
         records_json = {name: record.to_json() for name, record in records.items()}
         self._save_raw(records_json)
+
+    def save(self, records: dict[str, SyncRecord]) -> None:
+        """Save all sync records. Alias for save_all()."""
+        self.save_all(records)
     
     def _save_raw(self, records: dict[str, object]) -> None:
         """Save raw JSON dict to disk."""
