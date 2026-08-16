@@ -13,33 +13,55 @@ from studiolink.lmstudio_adapter import LMStudioError
 from studiolink.models import DoctorCheck, ImportMode, LinkMode, SyncResult
 from studiolink.service import StatusEntry, StudioLinkService
 
+logger = logging.getLogger("studiolink")
+
+
+def _common_parser() -> argparse.ArgumentParser:
+    """Options accepted both before and after the subcommand.
+
+    The SUPPRESS default is essential: parents= shares action objects
+    between the top-level parser and every subparser, and any real default
+    set on the shared action would let a subcommand's parse clobber a value
+    given before the subcommand (sdl -v scan).
+    """
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Enable verbose output (debug logging).",
+    )
+    return common
+
 
 def build_parser() -> argparse.ArgumentParser:
+    common = _common_parser()
     parser = argparse.ArgumentParser(
         prog="sdl",
-        usage="sdl [-v] [--version] [--help] <command> [<args>]",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        add_help=False,
+        parents=[common],
+        description="Sync Ollama-downloaded GGUF models into LM Studio.",
+        epilog="Run 'sdl <command> --help' for command-specific options.",
     )
     parser.add_argument(
-        "-v", action="store_true", help="Enable verbose output (debug logging)."
+        "--version",
+        action="version",
+        version=f"StudioLink {__version__}",
     )
-    parser.add_argument(
-        "--version", action="store_true", help="Show version information."
-    )
-    parser.add_argument(
-        "--help", action="store_true", help="Show this help message and exit."
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command", required=True, metavar="<command>")
 
     scan_parser = subparsers.add_parser(
-        "scan", help="Discover GGUF-backed Ollama models."
+        "scan",
+        parents=[common],
+        help="Discover GGUF-backed Ollama models.",
     )
     scan_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     scan_parser.set_defaults(func=run_scan)
 
     sync_parser = subparsers.add_parser(
-        "sync", help="Import one or more models into LM Studio."
+        "sync",
+        parents=[common],
+        help="Import one or more models into LM Studio.",
     )
     sync_parser.add_argument("models", nargs="*", help="Model names from `sdl scan`.")
     sync_parser.add_argument(
@@ -62,101 +84,77 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument(
         "--direct",
         action="store_true",
-        help="Use Ollama blobs directly (skip import, no extra storage).",
+        help="Import the Ollama blob directly (no staging alias).",
     )
     sync_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     sync_parser.set_defaults(func=run_sync)
 
     status_parser = subparsers.add_parser(
-        "status", help="Show discovered models and sync state."
+        "status",
+        parents=[common],
+        help="Show discovered models and sync state.",
     )
     status_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     status_parser.set_defaults(func=run_status)
 
     doctor_parser = subparsers.add_parser(
-        "doctor", help="Check local StudioLink prerequisites."
+        "doctor",
+        parents=[common],
+        help="Check local StudioLink prerequisites.",
     )
     doctor_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     doctor_parser.set_defaults(func=run_doctor)
 
+    prune_parser = subparsers.add_parser(
+        "prune",
+        parents=[common],
+        help="Remove staging aliases and state for models Ollama no longer has.",
+    )
+    prune_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would be removed without deleting anything.",
+    )
+    prune_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
+    prune_parser.set_defaults(func=run_prune)
+
     upgrade_parser = subparsers.add_parser(
-        "upgrade", help="Check for and install newer StudioLink version."
+        "upgrade",
+        parents=[common],
+        help="Check for and install newer StudioLink version.",
     )
     upgrade_parser.set_defaults(func=run_upgrade)
+
+    help_parser = subparsers.add_parser(
+        "help",
+        parents=[common],
+        help="Show the full command reference.",
+    )
+    help_parser.set_defaults(func=run_help)
     return parser
 
 
-def _preparse_args(argv: list[str] | None) -> tuple[argparse.Namespace | None, bool]:
-    """Pre-parse args to handle help/version before subparsers."""
-    parser = argparse.ArgumentParser(
-        prog="sdl",
-        usage="sdl [-v] [--version] [--help] <command> [<args>]",
-        add_help=False,
-    )
-    parser.add_argument("--version", action="store_true")
-    parser.add_argument("--help", action="store_true")
-    parser.add_argument("-v", action="store_true")
-    parser.add_argument("command", nargs="?", choices=["scan", "sync", "status", "doctor"])
-
-    import io
-    from contextlib import redirect_stderr
-
-    try:
-        with redirect_stderr(io.StringIO()):
-            args = parser.parse_args(argv)
-    except SystemExit:
-        return None, True
-
-    if args.help or args.version:
-        return args, False
-
-    return args, True
+def _configure_logging(verbose: bool) -> None:
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
+    logger.setLevel(logging.DEBUG if verbose else logging.WARNING)
 
 
 def main(argv: list[str] | None = None) -> int:
-    preparsed, should_continue = _preparse_args(argv)
-
-    if preparsed is None and not should_continue:
-        build_parser().print_help()
+    args_list = list(sys.argv[1:] if argv is None else argv)
+    parser = build_parser()
+    if not args_list:
+        parser.print_help()
         return 0
 
-    if preparsed and (preparsed.help or preparsed.version):
-        parser = build_parser()
-        if preparsed.version:
-            print(f"StudioLink {__version__}")
-            return 0
-        if preparsed.help:
-            build_parser().print_help()
-            return 0
+    args = parser.parse_args(args_list)
+    _configure_logging(getattr(args, "verbose", False))
 
-    parser = build_parser()
-
-    import io
-    from contextlib import redirect_stderr
-
-    try:
-        with redirect_stderr(io.StringIO()):
-            args = parser.parse_args(argv)
-    except SystemExit:
-        print(
-            "Error: Invalid command. Use 'sdl --help' for available commands.",
-            file=sys.stderr,
-        )
-        return 1
-
-    verbose = (preparsed and getattr(preparsed, "v", False)) or (args and getattr(args, "verbose", False))
-    if verbose:
-        logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
-        logging.getLogger("studiolink").setLevel(logging.DEBUG)
-    else:
-        logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
-        logging.getLogger("studiolink").setLevel(logging.WARNING)
     service = StudioLinkService()
-    logging.debug("Configuration loaded:")
-    logging.debug("  Ollama manifests: %s", service.config.ollama_manifests_dir)
-    logging.debug("  Ollama blobs: %s", service.config.ollama_blobs_dir)
-    logging.debug("  LM Studio models: %s", service.config.lmstudio_models_dir)
-    logging.debug("  State file: %s", service.config.state_file)
+    logger.debug("Configuration loaded:")
+    logger.debug("  Ollama manifests: %s", service.config.ollama_manifests_dir)
+    logger.debug("  Ollama blobs: %s", service.config.ollama_blobs_dir)
+    logger.debug("  LM Studio models: %s", service.config.lmstudio_models_dir)
+    logger.debug("  State file: %s", service.config.state_file)
     try:
         return int(args.func(args, service))
     except ValueError as exc:
@@ -166,6 +164,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     except Exception as exc:
+        if getattr(args, "verbose", False):
+            logger.debug("Unhandled error:", exc_info=True)
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
@@ -245,32 +245,84 @@ def run_doctor(args: argparse.Namespace, service: StudioLinkService) -> int:
     return 0 if all(check.ok for check in checks) else 1
 
 
+def run_prune(args: argparse.Namespace, service: StudioLinkService) -> int:
+    report = service.prune(dry_run=bool(args.dry_run))
+    if args.json:
+        print(json.dumps(report.to_json(), indent=2))
+        return 0
+
+    verb = "Would remove" if report.dry_run else "Removed"
+    if not report.aliases and not report.records_removed:
+        print("Nothing to prune.")
+        return 0
+    for item in report.aliases:
+        print(f"- {verb} alias: {item.path} ({item.size} bytes) - {item.reason}")
+    if report.records_removed:
+        print(
+            f"- {verb} {len(report.records_removed)} stale sync record(s): "
+            + ", ".join(report.records_removed)
+        )
+    would_free = sum(item.size for item in report.aliases if item.would_free)
+    if would_free:
+        action = "would free" if report.dry_run else "freed"
+        print(f"~{would_free} bytes {action} (aliases that were the last link).")
+    return 0
+
+
 def run_upgrade(args: argparse.Namespace, service: StudioLinkService) -> int:
     try:
         url = "https://pypi.org/pypi/studiolink/json"
         with urllib.request.urlopen(url, timeout=10) as resp:
             data = json.loads(resp.read())
-            latest = data["info"]["version"]
-    except Exception as e:
-        print(f"Error: Could not check for updates: {e}", file=sys.stderr)
+            latest = str(data["info"]["version"])
+    except Exception as exc:
+        print(f"Error: Could not check for updates: {exc}", file=sys.stderr)
         return 1
 
-    current = __version__
+    if _version_tuple(latest) <= _version_tuple(__version__):
+        print(f"Already on latest version: {__version__}")
+        return 0
 
-    if latest > current:
-        try:
-            subprocess.run(
-                ["pip", "install", "studiolink", "--upgrade", "--quiet"],
-                check=True,
-            )
-            print(f"Upgraded from {current} to {latest}")
-        except subprocess.CalledProcessError:
-            print(f"Error: Failed to upgrade", file=sys.stderr)
-            return 1
-    else:
-        print(f"Already on latest version: {current}")
-
+    command = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "studiolink",
+        "--upgrade",
+        "--quiet",
+    ]
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        print(
+            f"Error: Failed to upgrade (pip exited {result.returncode}):",
+            file=sys.stderr,
+        )
+        for stream in (result.stdout, result.stderr):
+            if stream and stream.strip():
+                print(stream.strip(), file=sys.stderr)
+        print(
+            "Hint: on a system-managed Python (PEP 668), upgrade inside a "
+            "virtualenv or via the tool you installed with (e.g. pipx).",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"Upgraded from {__version__} to {latest}")
     return 0
+
+
+def _version_tuple(version: str) -> tuple[int, ...]:
+    parts: list[int] = []
+    for piece in version.split("."):
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
 
 
 def run_help(args: argparse.Namespace, service: StudioLinkService) -> int:
@@ -291,6 +343,13 @@ Available Commands:
   doctor            Check local StudioLink prerequisites.
                     Usage: sdl doctor [--json] [-v]
 
+  prune             Remove staging aliases and sync state for models that
+                    Ollama no longer has (reclaims pinned blob space).
+                    Usage: sdl prune [--dry-run] [--json] [-v]
+
+  upgrade           Check for and install a newer StudioLink version.
+                    Usage: sdl upgrade [-v]
+
   help              Show this help message.
 
 Global Options:
@@ -307,6 +366,7 @@ Examples:
   sdl sync --all                 # Import all discovered models
   sdl status                     # Check sync status
   sdl doctor                     # Verify prerequisites
+  sdl prune                      # Clean up orphaned import aliases
 
 For more help on a specific command:
   sdl <command> --help
