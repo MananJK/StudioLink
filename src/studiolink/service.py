@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from studiolink.ollama_adapter import OllamaAdapter
@@ -16,11 +15,13 @@ from studiolink.models import (
     LinkMode,
     ModelReadiness,
     OllamaModel,
+    PruneReport,
+    PruneResult,
     SyncRecord,
     SyncResult,
 )
 from studiolink.state import StateStore
-from studiolink.syncer import Syncer
+from studiolink.syncer import Syncer, same_file
 
 if TYPE_CHECKING:
     from studiolink.ports import LMStudioPort, OllamaPort
@@ -71,9 +72,7 @@ class StudioLinkService:
         return [
             StatusEntry(
                 model=model,
-                synced=is_synced(
-                    model, records.get(model.canonical_name)
-                ),
+                synced=is_synced(model, records.get(model.canonical_name)),
                 sync_record=records.get(model.canonical_name),
             )
             for model in models
@@ -111,6 +110,82 @@ class StudioLinkService:
         syncer = Syncer(self.config, self.lmstudio, self.state)
         return syncer.sync(selected, mode, import_mode, dry_run)
 
+    def prune(self, *, dry_run: bool = False) -> PruneReport:
+        """Remove staging aliases and sync records for models Ollama no longer has.
+
+        Hard-linked aliases keep deleted Ollama blobs alive on disk; this is
+        the only way to reclaim that space.
+        """
+        models = self.scan()
+        expected: dict[str, OllamaModel] = {
+            model.import_filename: model
+            for model in models
+            if model.readiness is ModelReadiness.READY and model.blob_path is not None
+        }
+
+        alias_results: list[PruneResult] = []
+        staging = self.config.import_staging_dir
+        if staging.exists():
+            for path in sorted(staging.iterdir()):
+                if not path.is_file():
+                    continue
+                model = expected.get(path.name)
+                if model is not None and same_file(path, model.blob_path or path):
+                    continue
+                reason = (
+                    "alias no longer points at the current model blob"
+                    if model is not None
+                    else "model no longer present in Ollama (or was re-pulled)"
+                )
+                try:
+                    stat = path.stat()
+                except OSError as exc:
+                    logger.warning("Could not inspect alias %s: %s", path, exc)
+                    continue
+                removed = False
+                if not dry_run:
+                    try:
+                        path.unlink()
+                        removed = True
+                    except OSError as exc:
+                        logger.warning("Could not remove alias %s: %s", path, exc)
+                alias_results.append(
+                    PruneResult(
+                        path=path,
+                        size=stat.st_size,
+                        would_free=stat.st_nlink == 1,
+                        reason=reason,
+                        removed=removed,
+                    )
+                )
+
+        # Only prune records when Ollama's library is visible; an empty scan
+        # usually means the models dir is misconfigured, not that everything
+        # was removed.
+        records_removed: tuple[str, ...] = ()
+        if models:
+            known = {model.canonical_name for model in models}
+            records = self.state.get_all_records()
+            stale_names = sorted(
+                name for name in records if name not in known
+            )
+            if stale_names and not dry_run:
+                for name in stale_names:
+                    self.state.remove(name)
+            records_removed = tuple(stale_names)
+
+        logger.debug(
+            "Prune complete: %d alias(es), %d record(s) (dry_run=%s)",
+            len(alias_results),
+            len(records_removed),
+            dry_run,
+        )
+        return PruneReport(
+            dry_run=dry_run,
+            aliases=tuple(alias_results),
+            records_removed=records_removed,
+        )
+
     def doctor(self) -> list[DoctorCheck]:
         checks = [
             DoctorCheck(
@@ -138,12 +213,7 @@ class StudioLinkService:
                 self.config.lmstudio_models_dir.exists(),
                 str(self.config.lmstudio_models_dir),
             ),
-            DoctorCheck(
-                "hard-link volume compatibility",
-                self.config.import_staging_dir.drive.lower()
-                == self.config.lmstudio_models_dir.drive.lower(),
-                f"{self.config.import_staging_dir.drive} -> {self.config.lmstudio_models_dir.drive}",
-            ),
+            self._volume_compatibility_check(),
         ]
 
         try:
@@ -216,6 +286,33 @@ class StudioLinkService:
         )
 
         return checks
+
+    def _volume_compatibility_check(self) -> DoctorCheck:
+        """Check that hard links can span blobs -> staging -> LM Studio models.
+
+        Compares filesystem device ids, which works on both Windows (volume
+        serial) and POSIX (st_dev); drive letters alone are meaningless on
+        Linux.
+        """
+        targets = [
+            ("ollama blobs", self.config.ollama_blobs_dir),
+            ("import staging", self.config.import_staging_dir),
+            ("lm studio models", self.config.lmstudio_models_dir),
+        ]
+        devices: dict[str, int] = {}
+        for label, path in targets:
+            if not path.exists():
+                return DoctorCheck(
+                    "hard-link volume compatibility",
+                    True,
+                    f"skipped: {label} directory does not exist yet ({path})",
+                )
+            devices[label] = os.stat(path).st_dev
+        ok = len(set(devices.values())) == 1
+        details = ", ".join(
+            f"{label}: device {device}" for label, device in devices.items()
+        )
+        return DoctorCheck("hard-link volume compatibility", ok, details)
 
     def _select_models(
         self, discovered: list[OllamaModel], requested_names: list[str]
