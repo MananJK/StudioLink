@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "studiolink"
-version = "0.1.3"
+version = "0.2.0"
 description = "Sync Ollama-downloaded GGUF models into LM Studio."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -28,8 +28,8 @@ dependencies = []
 dev = ["pytest>=8.0"]
 
 [project.urls]
-Homepage = "https://github.com/MananJK/StudioLink"
-Repository = "https://github.com/MananJK/StudioLink"
+Homepage = "https://github.com/ensevengg/StudioLink"
+Repository = "https://github.com/ensevengg/StudioLink"
 
 [project.scripts]
 sdl = "studiolink.cli:main"
