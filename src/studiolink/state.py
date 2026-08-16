@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 from studiolink.models import SyncRecord
+
+logger = logging.getLogger("studiolink")
+
 
 class StateStore:
     def __init__(self, path: Path) -> None:
@@ -12,21 +16,18 @@ class StateStore:
 
     def get_record(self, name: str) -> SyncRecord | None:
         """Get a single sync record by model name."""
-        records = self._load_raw()
-        record_data = records.get(name)
-        if record_data and isinstance(record_data, dict):
-            return SyncRecord.from_json(record_data)
-        return None
-    
+        record_data = self._load_raw().get(name)
+        return self._parse_record(name, record_data)
+
     def get_all_records(self) -> dict[str, SyncRecord]:
-        """Get all sync records."""
-        records = self._load_raw()
-        return {
-            name: SyncRecord.from_json(record)
-            for name, record in records.items()
-            if isinstance(record, dict)
-        }
-    
+        """Get all sync records, skipping entries that fail to parse."""
+        records: dict[str, SyncRecord] = {}
+        for name, record_data in self._load_raw().items():
+            record = self._parse_record(name, record_data)
+            if record is not None:
+                records[name] = record
+        return records
+
     def upsert(self, record: SyncRecord) -> None:
         """Insert or update a sync record."""
         records = self._load_raw()
@@ -34,29 +35,39 @@ class StateStore:
         self._save_raw(records)
 
     def remove(self, name: str) -> None:
-        """Delete a sync record by model name"""
+        """Delete a sync record by model name."""
         records = self._load_raw()
         if name in records:
             del records[name]
             self._save_raw(records)
 
-    def save_all(self, records: dict[str, SyncRecord]) -> None:
+    def save(self, records: dict[str, SyncRecord]) -> None:
         """Save all sync records at once (bulk operation)."""
         records_json = {name: record.to_json() for name, record in records.items()}
         self._save_raw(records_json)
 
-    def save(self, records: dict[str, SyncRecord]) -> None:
-        """Save all sync records. Alias for save_all()."""
-        self.save_all(records)
-    
+    # Backwards-compatible alias.
+    save_all = save
+
+    @staticmethod
+    def _parse_record(name: str, record_data: object) -> SyncRecord | None:
+        if not isinstance(record_data, dict):
+            return None
+        try:
+            return SyncRecord.from_json(record_data)
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning("Skipping corrupt sync record %r: %s", name, exc)
+            return None
+
     def _save_raw(self, records: dict[str, object]) -> None:
-        """Save raw JSON dict to disk."""
+        """Persist raw JSON dict to disk atomically."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "schema_version": 1,
-            "sync_records": records,
-        }
-        self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        payload = json.dumps(
+            {"schema_version": 1, "sync_records": records}, indent=2
+        )
+        tmp_path = self.path.parent / (self.path.name + ".tmp")
+        tmp_path.write_text(payload, encoding="utf-8")
+        os.replace(tmp_path, self.path)
 
     def _load_raw(self) -> dict[str, object]:
         """Load raw JSON dict from disk."""
@@ -65,8 +76,16 @@ class StateStore:
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            logging.warning(
+            logger.warning(
                 "Corrupted state file at %s: %s. Starting fresh.", self.path, exc
             )
             return {}
-        return payload.get("sync_records", {})
+        if not isinstance(payload, dict):
+            logger.warning(
+                "Corrupted state file at %s: expected a JSON object. "
+                "Starting fresh.",
+                self.path,
+            )
+            return {}
+        records = payload.get("sync_records", {})
+        return records if isinstance(records, dict) else {}
