@@ -7,6 +7,9 @@ from studiolink.config import StudioLinkConfig
 from studiolink.models import ImportResult, LinkMode
 
 DEFAULT_TIMEOUT = 60
+# Importing with --copy moves multi-GB GGUF files; give it an hour instead of
+# the short timeout used for version/capability probes.
+IMPORT_TIMEOUT = 3600
 
 
 class LMStudioError(Exception):
@@ -28,7 +31,6 @@ class LMStudioAdapter:
     def get_version(self) -> str | None:
         try:
             result = self._run([str(self.config.lms_exe), "--version"], check=True)
-            return result.stdout.strip() or None
         except subprocess.CalledProcessError as exc:
             raise LMStudioError(
                 f"Failed to get LM Studio version: {exc.stderr}",
@@ -36,6 +38,10 @@ class LMStudioAdapter:
                 exc.returncode,
                 exc.stderr,
             ) from exc
+        output = "\n".join(
+            part for part in (result.stdout, result.stderr) if part
+        )
+        return output.strip() or None
 
     def get_import_capabilities(self) -> set[LinkMode]:
         try:
@@ -80,7 +86,7 @@ class LMStudioAdapter:
             command.append("--dry-run")
 
         try:
-            result = self._run(command, check=True)
+            result = self._run(command, check=True, timeout=IMPORT_TIMEOUT)
         except subprocess.CalledProcessError as exc:
             raise LMStudioError(
                 f"LM Studio import failed for {source_path}: {exc.stderr}",
@@ -100,10 +106,20 @@ class LMStudioAdapter:
     def _run(
         command: list[str], *, check: bool, timeout: int = DEFAULT_TIMEOUT
     ) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=check,
-            timeout=timeout,
-        )
+        try:
+            return subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=check,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise LMStudioError(
+                f"LM Studio command timed out after {timeout}s: {' '.join(command)}",
+                command,
+                -1,
+                str(exc),
+            ) from exc
