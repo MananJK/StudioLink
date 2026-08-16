@@ -22,9 +22,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Testing
-tests/
-
 # Install
 src/studiolink.egg-info/
 
