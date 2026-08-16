@@ -10,16 +10,19 @@ StudioLink is a Python CLI tool that bridges Ollama and LM Studio. It treats Oll
 - 🔄 **Sync** - Import models into LM Studio with one command
 - 📊 **Status** - Track which models are synced and their current state
 - 🩺 **Doctor** - Verify prerequisites and diagnose issues
-- 🔗 **Smart linking** - Uses hard links by default, falls back to copy when needed
+- 🧹 **Prune** - Reclaim disk space pinned by orphaned import aliases
+- 🔗 **Smart linking** - Uses hard links by default; pass `--copy` when volumes differ
 - 💾 **State tracking** - Remembers what's been synced to avoid re-importing
 
 ## Prerequisites
 
 Before using StudioLink, ensure you have:
 
-1. **Ollama** installed and available at `~/.ollama/models/`
-2. **LM Studio** with the `lms` CLI installed at `~/.lmstudio/bin/lms.exe`
+1. **Ollama** installed, with its model library at `~/.ollama/models/` (or wherever `OLLAMA_MODELS` points)
+2. **LM Studio** with the `lms` CLI installed
 3. **Python 3.12+**
+
+Default executable locations are detected per platform (e.g. `ollama.exe` under `AppData` on Windows; `ollama` from your `PATH` and `~/.lmstudio/bin/lms` on Linux/macOS). Override with environment variables if yours differ - see [Configuration](#configuration).
 
 ## Installation
 
@@ -28,7 +31,10 @@ pip install studiolink
 ```
 
 To upgrade to the latest version:
+
+```powershell
 sdl upgrade
+```
 
 ## Quick Start
 
@@ -124,6 +130,22 @@ Discovered 3 model(s); 1 tracked as synced.
 - <modelname3>: pending
 ```
 
+### `sdl prune`
+Remove staging aliases and sync state for models that Ollama no longer has.
+
+Because synced models are hard-linked, deleting a model in Ollama does **not** free its disk space until the matching import alias is removed - `sdl prune` does exactly that.
+
+```powershell
+# Preview what would be removed
+sdl prune --dry-run
+
+# Actually remove orphaned aliases and stale sync records
+sdl prune
+
+# Output as JSON
+sdl prune --json
+```
+
 ### `sdl doctor`
 Check local StudioLink prerequisites and diagnose issues.
 
@@ -178,24 +200,25 @@ When scanning or checking status, models can have these states:
 
 ## Configuration
 
-StudioLink uses the following default paths (Windows):
+Default paths are platform-aware; every one can be overridden with an environment variable:
 
-| Setting | Default Path | Environment Variable |
-|---------|--------------|---------------------|
-| Ollama executable | `~\AppData\Local\Programs\Ollama\ollama.exe` | `STUDIOLINK_OLLAMA_EXE` |
-| LM Studio CLI | `~\.lmstudio\bin\lms.exe` | `STUDIOLINK_LMS_EXE` |
-| Ollama models | `~\.ollama\models` | `STUDIOLINK_OLLAMA_MODELS_DIR` |
-| LM Studio models | `~\.lmstudio\models` | `STUDIOLINK_LMSTUDIO_MODELS_DIR` |
-| State directory | `~\.sdl` | `STUDIOLINK_STATE_DIR` |
+| Setting | Windows default | Linux/macOS default | Environment Variable |
+|---------|-----------------|---------------------|---------------------|
+| Ollama executable | `~\AppData\Local\Programs\Ollama\ollama.exe` | `ollama` from `PATH` (fallback `/usr/bin/ollama`) | `STUDIOLINK_OLLAMA_EXE` |
+| LM Studio CLI | `~\.lmstudio\bin\lms.exe` | `lms` from `PATH` (fallback `~/.lmstudio/bin/lms`) | `STUDIOLINK_LMS_EXE` |
+| Ollama models | `~\.ollama\models` | `~/.ollama/models` | `STUDIOLINK_OLLAMA_MODELS_DIR` (falls back to Ollama's own `OLLAMA_MODELS`) |
+| LM Studio models | `~\.lmstudio\models` | `~/.lmstudio/models` | `STUDIOLINK_LMSTUDIO_MODELS_DIR` |
+| State directory | `~\.studiolink` | `~/.studiolink` | `STUDIOLINK_STATE_DIR` |
 
 ## How It Works
 
 1. **Scanning** - Reads Ollama manifest files from `~/.ollama/models/manifests/` to discover models
 2. **Blob Resolution** - Locates GGUF blobs in `~/.ollama/models/blobs/` by digest
 3. **Validation** - Verifies blobs start with GGUF magic bytes
-4. **Import Aliases** - Creates human-readable `.gguf` aliases in `~/.sdl/imports/`
+4. **Import Aliases** - Creates human-readable `.gguf` hard links in `~/.studiolink/imports/`, named after the model and digest so re-pulled models never reuse a stale alias
 5. **LM Studio Import** - Uses `lms import` CLI to import models
-6. **State Tracking** - Saves sync records to `~/.sdl/state.json`
+6. **State Tracking** - Saves sync records to `~/.studiolink/state.json` (written atomically)
+7. **Pruning** - `sdl prune` removes aliases for models Ollama no longer has, reclaiming pinned blob space
 
 ## Troubleshooting
 
@@ -206,7 +229,16 @@ ollama pull <model-name>
 ```
 
 ### Hard link fails (cross-volume)
-StudioLink automatically falls back to copy mode if hard links fail (e.g., Ollama and StudioLink state are on different drives). Use `--verbose` to see the fallback in action.
+Hard links require the Ollama blob store, the StudioLink state directory, and the LM Studio models directory to live on the same filesystem/volume. If they don't, the sync reports a hard-link error; retry with copy mode instead:
+
+```powershell
+sdl sync <model-name> --copy
+```
+
+Alternatively, point `STUDIOLINK_STATE_DIR` at a location on the same volume as your Ollama models.
+
+### Deleted a model in Ollama but disk space wasn't freed
+Synced models keep their blobs alive through hard links in the StudioLink imports directory. Run `sdl prune` to remove aliases for models Ollama no longer has and reclaim the space.
 
 ### LM Studio import fails
 Run `sdl doctor` to verify:
@@ -218,8 +250,9 @@ Run `sdl doctor` to verify:
 
 - **Ollama as source of truth** - StudioLink never modifies Ollama's model store
 - **Hard links by default** - Space-efficient, creates references rather than copies
-- **Cross-volume fallback** - Automatically copies when hard links aren't possible
-- **State persistence** - Tracks imports to avoid redundant operations
+- **No silent fallbacks** - If a hard link is impossible (cross-volume), the sync fails loudly; use `--copy` explicitly
+- **State persistence** - Tracks imports to avoid redundant operations; state is written atomically and corrupt records are skipped, never crash
+- **Prune over leak** - Orphaned aliases are cleaned up on demand with `sdl prune` instead of pinning disk space forever
 - **CLI-only** - No GUI, designed for automation and scripting
 
 ## License
