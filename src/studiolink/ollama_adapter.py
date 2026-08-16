@@ -78,6 +78,10 @@ class OllamaAdapter:
             logger.debug("Invalid manifest JSON in %s: %s", manifest_path, exc)
             issues.append(f"invalid manifest JSON: {exc}")
             manifest = {}
+        if not isinstance(manifest, dict):
+            logger.debug("Manifest is not a JSON object: %s", manifest_path)
+            issues.append("manifest is not a JSON object")
+            manifest = {}
 
         model_layer = None
         for layer in manifest.get("layers", []):
