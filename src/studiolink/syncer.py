@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
 from studiolink.config import StudioLinkConfig
+from studiolink.lmstudio_adapter import LMStudioError
 from studiolink.models import (
     ImportMode,
+    ImportResult,
     is_synced,
     LinkMode,
     ModelReadiness,
@@ -19,6 +22,15 @@ from studiolink.ports import LMStudioPort
 from studiolink.state import StateStore
 
 logger = logging.getLogger("studiolink")
+
+
+def same_file(left: Path, right: Path) -> bool:
+    """Check whether two paths reference the same inode (hard link)."""
+    try:
+        left_stat, right_stat = left.stat(), right.stat()
+    except OSError:
+        return False
+    return (left_stat.st_dev, left_stat.st_ino) == (right_stat.st_dev, right_stat.st_ino)
 
 
 class Syncer:
@@ -122,6 +134,8 @@ class Syncer:
                     status="error",
                     message=str(exc),
                 )
+
+        import_error: Exception | None = None
         try:
             import_result = self.lmstudio.import_model(
                 str(alias_path),
@@ -130,6 +144,10 @@ class Syncer:
                 dry_run=dry_run,
             )
             logger.debug("LM Studio import completed: %s", import_result.return_code)
+        except (LMStudioError, subprocess.TimeoutExpired) as exc:
+            # One failing model must not abort the rest of the batch.
+            logger.debug("LM Studio import failed: %s", exc)
+            import_error = exc
         finally:
             if (
                 dry_run
@@ -139,6 +157,10 @@ class Syncer:
             ):
                 logger.debug("Cleaning up dry-run alias: %s", alias_path)
                 alias_path.unlink()
+
+        if import_error is not None:
+            return SyncResult(model=model, status="error", message=str(import_error))
+
         record = SyncRecord(
             canonical_name=model.canonical_name,
             digest=model.model_digest,
@@ -152,27 +174,28 @@ class Syncer:
         return SyncResult(
             model=model,
             status="dry-run" if dry_run else "synced",
-            message=self._format_import_message(import_result),
+            message=_format_import_message(import_result),
             record=record,
         )
 
     def _ensure_import_alias(self, model: OllamaModel) -> tuple[Path, bool]:
         return _ensure_import_alias(model, self.config.import_staging_dir)
 
-    @staticmethod
-    def _format_import_message(result: object) -> str:
-        return _format_import_message(result)
-
 
 def _ensure_import_alias(
     model: OllamaModel, staging_dir: Path
 ) -> tuple[Path, bool]:
     alias_path = staging_dir / model.import_filename
-    if alias_path.exists():
-        logger.debug("Import alias already exists: %s", alias_path)
-        return alias_path, False
     if model.blob_path is None:
         raise RuntimeError(f"No blob path for model {model.canonical_name}")
+    if alias_path.exists():
+        if same_file(alias_path, model.blob_path):
+            logger.debug("Import alias already exists: %s", alias_path)
+            return alias_path, False
+        # The alias survived a re-pull but now points at the old blob content;
+        # replace it so we never import stale weights.
+        logger.debug("Replacing stale import alias: %s", alias_path)
+        alias_path.unlink()
     staging_dir.mkdir(parents=True, exist_ok=True)
     try:
         os.link(model.blob_path, alias_path)
@@ -184,5 +207,9 @@ def _ensure_import_alias(
         ) from exc
 
 
-def _format_import_message(result: object) -> str:
+def _format_import_message(result: ImportResult) -> str:
+    for stream in (result.stdout, result.stderr):
+        lines = [line.strip() for line in stream.splitlines() if line.strip()]
+        if lines:
+            return lines[-1]
     return "imported successfully"

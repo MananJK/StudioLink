@@ -21,8 +21,8 @@ class LinkMode(StrEnum):
 
 
 class ImportMode(StrEnum):
-    ALIAS = "alias"  # Use import aliases (hard links) - default
-    DIRECT = "direct"  # Use Ollama blobs directly (no import)
+    ALIAS = "alias"  # Stage a .gguf hard link, then import that - default
+    DIRECT = "direct"  # Import the Ollama blob file directly (no staging alias)
 
 
 class ModelReadiness(StrEnum):
@@ -78,7 +78,10 @@ class OllamaModel:
 
     @property
     def import_filename(self) -> str:
-        raw = f"{self.canonical_name}-{(self.model_digest or 'unknown').replace(':', '-')[:5]}"
+        # Keep the hash portion of the digest so re-pulled models (same name,
+        # new digest) get a distinct alias instead of reusing the stale one.
+        digest_hash = (self.model_digest or "unknown").split(":")[-1][:12]
+        raw = f"{self.canonical_name}-{digest_hash}"
         safe = "".join(
             ch if ch.isalnum() or ch in ("-", "_", ".") else "-" for ch in raw
         )
@@ -130,11 +133,7 @@ def is_synced(model: OllamaModel, record: SyncRecord | None) -> bool:
     """Check if the sync record matches current model state."""
     if record is None:
         return False
-    if record.digest != model.model_digest:
-        return False
-    if record.link_mode is None:
-        return False
-    return True
+    return record.digest == model.model_digest
 
 
 @dataclass(slots=True, frozen=True)
@@ -159,3 +158,37 @@ class DoctorCheck:
     name: str
     ok: bool
     details: str
+
+
+@dataclass(slots=True, frozen=True)
+class PruneResult:
+    """A staging alias eligible for removal (or reported in a dry run)."""
+
+    path: Path
+    size: int
+    would_free: bool  # alias is the last link, so deleting it frees disk space
+    reason: str
+    removed: bool
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "path": str(self.path),
+            "size": self.size,
+            "would_free": self.would_free,
+            "reason": self.reason,
+            "removed": self.removed,
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class PruneReport:
+    dry_run: bool
+    aliases: tuple[PruneResult, ...] = ()
+    records_removed: tuple[str, ...] = ()
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "dry_run": self.dry_run,
+            "aliases": [item.to_json() for item in self.aliases],
+            "records_removed": list(self.records_removed),
+        }
